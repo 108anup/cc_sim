@@ -16,3 +16,4 @@ rand = "0.7.3"
 rand_distr = "0.2.2"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+circular-buffer = "0.1.7"

@@ -9,6 +9,7 @@ mod simulator;
 mod topology;
 mod tracer;
 mod transport;
+mod ndd;
 
 // Internal dependencies.
 use base::BufferSize;
