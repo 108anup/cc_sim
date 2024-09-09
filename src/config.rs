@@ -45,6 +45,7 @@ pub enum CCConfig {
     IncreaseBdpCC,
     Copa,
     Copa2,
+    NDD,
 }
 
 /// A group of senders

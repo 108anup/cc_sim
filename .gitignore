@@ -3,3 +3,5 @@
 *.png
 traces
 analysis/.ipynb_checkpoints
+.vscode
+Cargo.lock

@@ -133,7 +133,7 @@ impl CongestionControl for NDD {
             let c2 = slr.c_estimate(f_max);
             let n1 = c1/f_min;
             let n2 = c2/f_max;
-            slr.n_min = Some(f64::min(n1, n2));
+            slr.n_min = Some(f64::max(1., f64::min(n1, n2)));
             slr.n_max = Some(f64::max(n1, n2));
 
             // update cwnd as we have a new complete record
