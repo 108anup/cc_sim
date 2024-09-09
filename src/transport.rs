@@ -21,6 +21,8 @@ pub trait CongestionControl {
     fn get_cwnd(&mut self) -> u64;
     /// Returns the minimum interval between any two transmitted packets
     fn get_intersend_time(&mut self) -> Time;
+    fn init(&mut self, name: &str, config_file_path: Option<String>) {}
+    fn finish(&self) {}
 }
 
 impl CongestionControl for Box<dyn CongestionControl> {
@@ -41,6 +43,12 @@ impl CongestionControl for Box<dyn CongestionControl> {
     /// Returns the minimum interval between any two transmitted packets
     fn get_intersend_time(&mut self) -> Time {
         (**self).get_intersend_time()
+    }
+    fn init(&mut self, name: &str, config_file_path: Option<String>) {
+        (**self).init(name, config_file_path)
+    }
+    fn finish(&self) {
+        (**self).finish()
     }
 }
 

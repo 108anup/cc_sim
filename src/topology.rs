@@ -36,7 +36,7 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
     for group_config in &config.topo.sender_groups {
         for _ in 0..group_config.num_senders {
             // Create congestion control
-            let ccalg: Box<dyn CongestionControl> = match group_config.cc {
+            let mut ccalg: Box<dyn CongestionControl> = match group_config.cc {
                 CCConfig::Const { cwnd, intersend } => {
                     Box::new(cc::Const::new(cwnd, Time::from_micros(intersend)))
                 }
@@ -88,6 +88,9 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
             objs_to_reg.push(Box::new(delay));
             objs_to_reg.push(Box::new(aggregator));
             objs_to_reg.push(Box::new(acker));
+
+            let name = tcp_sender_id.to_string();
+            ccalg.init(&name, config.metrics_config_file);
         }
     }
 

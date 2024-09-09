@@ -17,6 +17,7 @@ pub struct Config {
     pub topo: ConfigTopo,
     // Random seed for reproducibility.
     pub random_seed: u8,
+    pub metrics_config_file: Option<String>,
 }
 
 /// Configure a `LinkTrace` for use in `Link`

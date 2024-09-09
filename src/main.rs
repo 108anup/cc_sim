@@ -10,6 +10,7 @@ mod topology;
 mod tracer;
 mod transport;
 mod ndd;
+mod metrics;
 
 // Internal dependencies.
 use base::BufferSize;
