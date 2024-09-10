@@ -95,6 +95,7 @@ fn main() -> Result<(), Error> {
                 link_bucket_size: Time::from_millis(200),
             },
             random_seed: 0,
+            metrics_config_file: None,
         }
     } else {
         eprintln!("{}", usage_string);

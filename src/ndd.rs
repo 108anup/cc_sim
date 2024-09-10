@@ -1,15 +1,17 @@
 // NDD: CCA that maintains O(N * D) delay when there are N flows.
 
+use std::any::Any;
+use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 
 use circular_buffer::CircularBuffer;
 use serde::{Deserialize, Serialize};
 
+use crate::metrics::{CsvMetric, MetricRegistry};
 use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
-use crate::metrics::{CsvMetric, MetricRegistry};
 
 pub const F_FILTER_LEN: usize = 10;
 
@@ -68,6 +70,30 @@ struct NDDState {
     n_max: f64,
 }
 
+impl NDDState {
+    fn to_row(&self) -> Vec<String> {
+        vec![
+            self.f_min.to_string(),
+            self.f_max.to_string(),
+            self.c_min.to_string(),
+            self.c_max.to_string(),
+            self.n_min.to_string(),
+            self.n_max.to_string(),
+        ]
+    }
+
+    fn get_columns() -> Vec<String> {
+        vec![
+            "f_min".to_string(),
+            "f_max".to_string(),
+            "c_min".to_string(),
+            "c_max".to_string(),
+            "n_min".to_string(),
+            "n_max".to_string(),
+        ]
+    }
+}
+
 pub struct NDD {
     base_rtt: RTTWindow,
     f_min_estimates: CircularBuffer<F_FILTER_LEN, f64>,
@@ -78,7 +104,7 @@ pub struct NDD {
     last_increase: bool,
 
     metric_registry: Option<MetricRegistry>,
-    ack_metric: Weak<CsvMetric<NDDState>>,
+    ack_metric: Option<Rc<RefCell<CsvMetric>>>,
 }
 
 impl Default for NDD {
@@ -93,7 +119,7 @@ impl Default for NDD {
             last_increase: false,
 
             metric_registry: None,
-            ack_metric: Weak::new(),
+            ack_metric: None,
         }
     }
 }
@@ -126,8 +152,7 @@ impl CongestionControl for NDD {
             last_record.snd_complete = true;
             last_record.ack_beg_seq = Some(_cum_ack);
             last_record.ack_beg_time = Some(now);
-        }
-        else if _cum_ack < last_record.snd_beg_seq {
+        } else if _cum_ack < last_record.snd_beg_seq {
             // There must be a record before last one whose ACKs have not
             // completed
             let slr = self.records.iter_mut().rev().nth(1).unwrap(); // second last record
@@ -141,17 +166,26 @@ impl CongestionControl for NDD {
             let snd_rate = slr.snd_rate();
             if ack_rate >= snd_rate {
                 self.f_min_estimates.push_back(ack_rate);
-            }
-            else {
+            } else {
                 self.f_max_estimates.push_back(ack_rate);
             }
 
-            let f_min = self.f_min_estimates.iter().copied().reduce(f64::max).unwrap();
-            let f_max = self.f_max_estimates.iter().copied().reduce(f64::min).unwrap();
-            let c_max = slr.c_estimate(f_min);  // smaller f_estimate implies larger c_estimate
+            let f_min = self
+                .f_min_estimates
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                .unwrap();
+            let f_max = self
+                .f_max_estimates
+                .iter()
+                .copied()
+                .reduce(f64::min)
+                .unwrap();
+            let c_max = slr.c_estimate(f_min); // smaller f_estimate implies larger c_estimate
             let c_min = slr.c_estimate(f_max);
-            let n1 = c_max/f_min;
-            let n2 = c_min/f_max;
+            let n1 = c_max / f_min;
+            let n2 = c_min / f_max;
             slr.n_min = Some(f64::max(1., f64::min(n1, n2)));
             slr.n_max = Some(f64::max(n1, n2));
 
@@ -164,15 +198,12 @@ impl CongestionControl for NDD {
             if target_delay_min <= delay.secs() && delay.secs() <= target_delay_max {
                 if self.last_increase {
                     self.cwnd *= 0.75;
-                }
-                else {
+                } else {
                     self.cwnd *= 1.25;
                 }
-            }
-            else if delay.secs() < target_delay_min {
+            } else if delay.secs() < target_delay_min {
                 self.cwnd *= 1.25;
-            }
-            else {
+            } else {
                 // delay.secs() > target_delay_max
                 self.cwnd *= 0.75;
             }
@@ -182,17 +213,17 @@ impl CongestionControl for NDD {
             self.prev_cwnd = self.cwnd;
 
             // TODO: if ack_metric is still alive, then log the state.
-            if let Some(ack_metric) = self.ack_metric.upgrade() {
-                ack_metric.log(NDDState {
+            if self.ack_metric.is_some() {
+                let ndd_state = NDDState {
                     f_min,
                     f_max,
-                    c_min: c_max,
-                    c_max: c_min,
+                    c_min,
+                    c_max,
                     n_min,
                     n_max,
-                });
+                };
+                self.ack_metric.as_ref().unwrap().borrow_mut().log(ndd_state.to_row());
             }
-
         }
 
         // TODO: should we average over the estimate of N?
@@ -206,9 +237,8 @@ impl CongestionControl for NDD {
             // Slow start like stuff when we don't have last record
             if delay.secs() <= 1.5 * base_rtt.secs() {
                 self.cwnd += 1.;
-            }
-            else {
-                self.cwnd -= 1./2.;
+            } else {
+                self.cwnd -= 1. / 2.;
             }
             self.cwnd = f64::max(2., self.cwnd);
             self.last_increase = self.prev_cwnd <= self.cwnd;
@@ -259,7 +289,12 @@ impl CongestionControl for NDD {
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
         if let Some(metrics_config_file) = metrics_config_file {
             self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
-            self.ack_metric = self.metric_registry.as_ref().unwrap().register_csv_metric(name, Vec::new());
+            let metric_name: &str = &(name.to_owned() + "ack");
+            self.ack_metric = self
+                .metric_registry
+                .as_mut()
+                .unwrap()
+                .register_csv_metric(metric_name, NDDState::get_columns());
         }
     }
 

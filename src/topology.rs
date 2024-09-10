@@ -60,6 +60,9 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
 
             let acker_addr = sched.next_addr();
 
+            let name = tcp_sender_id.to_string();
+            ccalg.init(&name, config.metrics_config_file.clone());
+
             // Create the sender and its delay module
             let sender_addr = sched.next_addr();
             let tcp_sender = TcpSender::new(
@@ -88,9 +91,6 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
             objs_to_reg.push(Box::new(delay));
             objs_to_reg.push(Box::new(aggregator));
             objs_to_reg.push(Box::new(acker));
-
-            let name = tcp_sender_id.to_string();
-            ccalg.init(&name, config.metrics_config_file);
         }
     }
 
