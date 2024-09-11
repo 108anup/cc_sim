@@ -36,5 +36,6 @@
       }
     ]
   },
-  "random_seed": 0
+  "random_seed": 0,
+  "metrics_config_file": "metrics_config.json"
 }

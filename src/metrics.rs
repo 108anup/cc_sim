@@ -36,6 +36,8 @@ impl Metric for CsvMetric {
             return Ok(());
         }
 
+        std::fs::create_dir_all(dpath)?;
+
         let fpath = format!("{}/{}.csv", dpath, self.name);
         let mut wtr = csv::Writer::from_path(fpath).unwrap();
         wtr.write_record(&self.columns)?;
@@ -44,6 +46,7 @@ impl Metric for CsvMetric {
             // wtr.serialize(row)?;
         }
         wtr.flush()?;
+
         Ok(())
     }
 }
@@ -72,7 +75,7 @@ pub struct MetricFilter {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MetricConfig {
     data_dir: String,
-    filter: Vec<MetricFilter>,
+    filters: Vec<MetricFilter>,
 }
 
 pub struct MetricRegistry {

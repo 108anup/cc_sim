@@ -212,7 +212,6 @@ impl CongestionControl for NDD {
             self.last_increase = self.prev_cwnd <= self.cwnd;
             self.prev_cwnd = self.cwnd;
 
-            // TODO: if ack_metric is still alive, then log the state.
             if self.ack_metric.is_some() {
                 let ndd_state = NDDState {
                     f_min,
