@@ -13,7 +13,11 @@ use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
-pub const F_FILTER_LEN: usize = 5;
+pub const F_FILTER_LEN: usize = 1;
+pub const MIN_CWND: f64 = 8.;
+// since we have 25% increase/decrease, we want the increase to be more than a
+// packet even when cwnd is lowest.
+pub const MIN_INTERSEND_TIME: Time = Time::from_micros(1000);  // TODO: correct value
 
 struct Record {
     snd_beg_seq: SeqNum,
@@ -55,6 +59,7 @@ impl Record {
         let ack_rate = self.ack_rate();
 
         assert!(snd_rate > ack_rate);
+        assert!(ack_rate >= f_estimate);
 
         (snd_rate * ack_rate - f_estimate * ack_rate) / (snd_rate - ack_rate)
     }
@@ -70,7 +75,7 @@ struct NDDState {
     n_max: Option<f64>,
     target_delay_min: Option<f64>,
     target_delay_max: Option<f64>,
-    delay: Option<f64>,
+    delay: f64,
     min_rtt: f64,
 }
 
@@ -90,6 +95,10 @@ impl NDDState {
             NDDState::option_to_string(self.c_max),
             NDDState::option_to_string(self.n_min),
             NDDState::option_to_string(self.n_max),
+            NDDState::option_to_string(self.target_delay_min),
+            NDDState::option_to_string(self.target_delay_max),
+            self.delay.to_string(),
+            self.min_rtt.to_string(),
         ]
     }
 
@@ -101,6 +110,10 @@ impl NDDState {
             "c_max".to_string(),
             "n_min".to_string(),
             "n_max".to_string(),
+            "target_delay_min".to_string(),
+            "target_delay_max".to_string(),
+            "delay".to_string(),
+            "min_rtt".to_string(),
         ]
     }
 }
@@ -135,8 +148,8 @@ impl Default for NDD {
             f_min_estimates: _fmin_estimates,
             f_max_estimates: _fmax_estimates,
             records: VecDeque::new(),
-            cwnd: 2.,
-            prev_cwnd: 2.,
+            cwnd: MIN_CWND,
+            prev_cwnd: MIN_CWND,
             last_increase: false,
 
             metric_registry: None,
@@ -220,7 +233,7 @@ impl CongestionControl for NDD {
                             n_max: None,
                             target_delay_min: None,
                             target_delay_max: None,
-                            delay: None,
+                            delay: delay.secs(),
                             min_rtt: self.min_rtt.secs(),
                         };
                         self.ack_metric.as_ref().unwrap().borrow_mut().log(ndd_state.to_row());
@@ -230,9 +243,10 @@ impl CongestionControl for NDD {
                     if f_max < f_min {
                         // TODO: hack. In reality f can be fast changing. We
                         // should take more recent estimates of f.
-                        let tmp = f_max;
-                        f_max = f_min;
-                        f_min = tmp;
+                        // let tmp = f_max;
+                        // f_max = f_min;
+                        // f_min = tmp;
+                        f_min = f_max;
                     }
                     let c_max = slr.c_estimate(f_min); // smaller f_estimate implies larger c_estimate
                     let c_min = slr.c_estimate(f_max);
@@ -245,7 +259,10 @@ impl CongestionControl for NDD {
 
                     // update cwnd as we have a new complete record
                     let n_min = slr.n_min.unwrap();
-                    let n_max = slr.n_max.unwrap();
+                    let mut n_max = slr.n_max.unwrap();
+                    if n_min == n_max {
+                        n_max = n_min + 0.5;
+                    }
                     let target_delay_min = n_min * self.min_rtt.secs();
                     let target_delay_max = n_max * self.min_rtt.secs();
 
@@ -272,14 +289,14 @@ impl CongestionControl for NDD {
                             n_max: Some(n_max),
                             target_delay_min: Some(target_delay_min),
                             target_delay_max: Some(target_delay_max),
-                            delay: Some(delay.secs()),
+                            delay: delay.secs(),
                             min_rtt: self.min_rtt.secs(),
                         };
                         self.ack_metric.as_ref().unwrap().borrow_mut().log(ndd_state.to_row());
                     }
                 }
 
-                self.cwnd = f64::max(2., self.cwnd);
+                self.cwnd = f64::max(MIN_CWND, self.cwnd);
                 self.last_increase = self.prev_cwnd <= self.cwnd;
                 self.prev_cwnd = self.cwnd;
             }
@@ -300,7 +317,7 @@ impl CongestionControl for NDD {
             } else {
                 self.cwnd -= 1. / 2.;
             }
-            self.cwnd = f64::max(2., self.cwnd);
+            self.cwnd = f64::max(MIN_CWND, self.cwnd);
             self.last_increase = self.prev_cwnd <= self.cwnd;
             self.prev_cwnd = self.cwnd;
         }
@@ -343,7 +360,7 @@ impl CongestionControl for NDD {
     }
 
     fn get_intersend_time(&mut self) -> Time {
-        Time::from_micros((2e6 * self.base_rtt.get_srtt().secs() / self.cwnd) as u64)
+        std::cmp::max(MIN_INTERSEND_TIME, Time::from_micros((2e6 * self.base_rtt.get_srtt().secs() / self.cwnd) as u64))
     }
 
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
