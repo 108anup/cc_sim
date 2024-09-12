@@ -188,6 +188,7 @@ pub trait NetObj {
         now: Time,
         uid: u64,
     ) -> Result<Vec<(Time, NetObjId, Action)>, Error>;
+    fn finish(&self) {}
 }
 
 /// A single action to be taken
@@ -333,5 +334,11 @@ impl<'a> Scheduler<'a> {
             }
         }
         Ok(())
+    }
+
+    pub fn finish(&self) {
+        for obj in &self.objs {
+            obj.finish();
+        }
     }
 }

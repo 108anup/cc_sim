@@ -92,8 +92,9 @@ pub struct MetricRegistry {
 
 impl MetricRegistry {
     pub fn new(metric_config_file: &str) -> Self {
+        let metric_config_reader = std::fs::File::open(metric_config_file).unwrap();
         Self {
-            config: serde_json::from_str(metric_config_file).unwrap(),
+            config: serde_json::from_reader(metric_config_reader).unwrap(),
             csv_metrics: HashMap::new(),
         }
     }

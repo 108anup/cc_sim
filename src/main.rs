@@ -107,6 +107,7 @@ fn main() -> Result<(), Error> {
     let mut sched = create_topology(&config, &tracer)?;
 
     sched.simulate(config.sim_dur)?;
+    sched.finish();
 
     tracer.finalize()?;
 

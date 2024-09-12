@@ -688,6 +688,10 @@ impl<'a, C: CongestionControl + 'static> NetObj for TcpSender<'a, C> {
             }
         }
     }
+
+    fn finish(&self) {
+        self.cc.finish();
+    }
 }
 
 /// Acks every packet it receives to the sender via the given next-hop
