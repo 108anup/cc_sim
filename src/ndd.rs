@@ -13,11 +13,12 @@ use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
-pub const F_FILTER_LEN: usize = 1;
+pub const F_FILTER_LEN: usize = 10;
 pub const MIN_CWND: f64 = 8.;
 // since we have 25% increase/decrease, we want the increase to be more than a
 // packet even when cwnd is lowest.
 pub const MIN_INTERSEND_TIME: Time = Time::from_micros(1000);  // TODO: correct value
+pub const MULTIPLIER: f64 = 1.125;
 
 struct Record {
     snd_beg_seq: SeqNum,
@@ -59,7 +60,7 @@ impl Record {
         let ack_rate = self.ack_rate();
 
         assert!(snd_rate > ack_rate);
-        assert!(ack_rate >= f_estimate);
+        // assert!(ack_rate >= f_estimate);
 
         (snd_rate * ack_rate - f_estimate * ack_rate) / (snd_rate - ack_rate)
     }
@@ -126,6 +127,7 @@ pub struct NDD {
 
     f_min_estimates: CircularBuffer<F_FILTER_LEN, f64>,
     f_max_estimates: CircularBuffer<F_FILTER_LEN, f64>,
+    c_lower_bound_estimates: CircularBuffer<F_FILTER_LEN, f64>,
     records: VecDeque<Record>,
     cwnd: f64,
     prev_cwnd: f64,
@@ -142,11 +144,14 @@ impl Default for NDD {
         _fmin_estimates.push_back(1.);  // pkt per sec
         let mut _fmax_estimates = CircularBuffer::new();
         _fmax_estimates.push_back(1e9);  // pkt per sec
+        let mut _cmin_estimates = CircularBuffer::new();
+        _cmin_estimates.push_back(1.);  // pkt per sec
         Self {
             base_rtt: RTTWindow::new(Time::from_secs(10)),
             min_rtt: Time::from_secs(10),  // TODO: correct initial value
             f_min_estimates: _fmin_estimates,
             f_max_estimates: _fmax_estimates,
+            c_lower_bound_estimates: _cmin_estimates,
             records: VecDeque::new(),
             cwnd: MIN_CWND,
             prev_cwnd: MIN_CWND,
@@ -221,7 +226,7 @@ impl CongestionControl for NDD {
 
                 // TODO: refactor state update and action
                 if snd_rate <= ack_rate {
-                    self.cwnd *= 1.25;
+                    self.cwnd *= MULTIPLIER;
 
                     if self.ack_metric.is_some() {
                         let ndd_state = NDDState {
@@ -240,51 +245,72 @@ impl CongestionControl for NDD {
                     }
                 }
                 else {
-                    if f_max < f_min {
-                        // TODO: hack. In reality f can be fast changing. We
-                        // should take more recent estimates of f.
-                        // let tmp = f_max;
-                        // f_max = f_min;
-                        // f_min = tmp;
-                        f_min = f_max;
-                    }
-                    let c_max = slr.c_estimate(f_min); // smaller f_estimate implies larger c_estimate
-                    let c_min = slr.c_estimate(f_max);
-                    assert!(c_max >= c_min);
-                    let n1 = c_max / f_min;
-                    let n2 = c_min / f_max;
-                    assert!(n1 >= n2);
-                    slr.n_min = Some(f64::max(1., f64::min(n1, n2)));
-                    slr.n_max = Some(f64::max(n1, n2));
+                    // if f_max < f_min {
+                    //     // TODO: hack. In reality f can be fast changing. We
+                    //     // should take more recent estimates of f.
+                    //     // let tmp = f_max;
+                    //     // f_max = f_min;
+                    //     // f_min = tmp;
+                    //     f_min = f_max;
+                    // }
+                    // let c_max = slr.c_estimate(f_min); // smaller f_estimate implies larger c_estimate
+                    // let c_min = slr.c_estimate(f_max);
+                    // assert!(c_max >= c_min);
+                    // let n1 = c_max / f_min;
+                    // let n2 = c_min / f_max;
+                    // assert!(n1 >= n2);
+                    // slr.n_min = Some(f64::max(1., f64::min(n1, n2)));
+                    // slr.n_max = Some(f64::max(n1, n2));
 
-                    // update cwnd as we have a new complete record
-                    let n_min = slr.n_min.unwrap();
-                    let mut n_max = slr.n_max.unwrap();
-                    if n_min == n_max {
-                        n_max = n_min + 0.5;
-                    }
+                    // // update cwnd as we have a new complete record
+                    // let n_min = slr.n_min.unwrap();
+                    // let mut n_max = slr.n_max.unwrap();
+                    // if n_min == n_max {
+                    //     n_max = n_min + 0.5;
+                    // }
+                    // let target_delay_min = n_min * self.min_rtt.secs();
+                    // let target_delay_max = n_max * self.min_rtt.secs();
+
+                    // Try one sided estimates.
+                    let f_upper_bound = f_min;
+                    let c_lower_bound = if slr.snd_rate() > f_upper_bound {
+                        slr.c_estimate(f_upper_bound)
+                    } else {
+                        f_upper_bound
+                    };
+
+                    self.c_lower_bound_estimates.push_back(c_lower_bound);
+                    let c_lower_bound_max = self
+                        .c_lower_bound_estimates
+                        .iter()
+                        .copied()
+                        .reduce(f64::max)
+                        .unwrap();
+
+                    let n_min = c_lower_bound_max / self.get_average_ack_rate();
+                    let n_max = n_min + 1.;
                     let target_delay_min = n_min * self.min_rtt.secs();
                     let target_delay_max = n_max * self.min_rtt.secs();
 
                     if target_delay_min <= delay.secs() && delay.secs() <= target_delay_max {
                         if self.last_increase {
-                            self.cwnd *= 0.75;
+                            self.cwnd *= 1./MULTIPLIER;
                         } else {
-                            self.cwnd *= 1.25;
+                            self.cwnd *= MULTIPLIER;
                         }
                     } else if delay.secs() < target_delay_min {
-                        self.cwnd *= 1.25;
+                        self.cwnd *= MULTIPLIER;
                     } else {
                         // delay.secs() > target_delay_max
-                        self.cwnd *= 0.75;
+                        self.cwnd *= 1./MULTIPLIER;
                     }
 
                     if self.ack_metric.is_some() {
                         let ndd_state = NDDState {
                             f_min,
                             f_max,
-                            c_min: Some(c_min),
-                            c_max: Some(c_max),
+                            c_min: Some(c_lower_bound_max),
+                            c_max: None,
                             n_min: Some(n_min),
                             n_max: Some(n_max),
                             target_delay_min: Some(target_delay_min),
@@ -379,5 +405,17 @@ impl CongestionControl for NDD {
         if let Some(metric_registry) = &self.metric_registry {
             metric_registry.finish();
         }
+    }
+}
+
+impl NDD {
+    fn get_average_ack_rate(&self) -> f64 {
+        let mut ack_rates = Vec::new();
+        for record in &self.records {
+            if record.ack_complete {
+                ack_rates.push(record.ack_rate());
+            }
+        }
+        ack_rates.iter().sum::<f64>() / ack_rates.len() as f64
     }
 }
