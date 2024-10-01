@@ -1,9 +1,8 @@
 use std::ops::Bound;
 
-use crate::interval::{Interval, IntervalList};
+use crate::interval::{Interval, IntervalList, MyF64};
 
-
-type RealNumRep = f64;
+type RealNumRep = MyF64;
 
 
 pub fn get_c_beliefs(a: &[RealNumRep], s: &[RealNumRep]) -> IntervalList<RealNumRep> {

@@ -1,9 +1,137 @@
-use std::ops::Bound;
+use std::ops::{Add, Bound, Div, Mul, Neg};
+
+use num::{Integer, Rational64, ToPrimitive};
+
+pub trait MyOrd {
+    fn max(self, other: Self) -> Self
+       where Self: Sized;
+    fn min(self, other: Self) -> Self
+       where Self: Sized;
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering;
+}
+
+impl MyOrd for f64 {
+    fn max(self, other: Self) -> Self {
+        self.max(other)
+    }
+
+    fn min(self, other: Self) -> Self {
+        self.min(other)
+    }
+
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+// impl MyOrd for u64 {
+//     fn max(self, other: Self) -> Self {
+//         Ord::max(self, other)
+//     }
+
+//     fn min(self, other: Self) -> Self {
+//         Ord::min(self, other)
+//     }
+
+//     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+//         self.partial_cmp(other).unwrap()
+//     }
+// }
+
+// For types that already have Ord
+macro_rules! impl_MyOrd {
+    ($($t:ty)*) => ($(
+        impl MyOrd for $t {
+            fn max(self, other: Self) -> Self {
+                Ord::max(self, other)
+            }
+
+            fn min(self, other: Self) -> Self {
+                Ord::min(self, other)
+            }
+
+            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+                Ord::cmp(self, other)
+            }
+        }
+    )*)
+}
+
+impl_MyOrd! {u64 Rational64}
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct MyF64 {
+    val: f64,
+}
+
+impl MyF64 {
+    pub fn new<T: Integer + ToPrimitive>(num: T, den: T) -> Self {
+        MyF64 { val: num.to_f64().unwrap() / den.to_f64().unwrap() }
+    }
+}
+
+impl MyOrd for MyF64 {
+    fn max(self, other: Self) -> Self {
+        MyF64{val: self.val.max(other.val)}
+    }
+
+    fn min(self, other: Self) -> Self {
+        MyF64{val: self.val.min(other.val)}
+    }
+
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Neg for MyF64 {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        MyF64 { val: -self.val }
+    }
+}
+
+impl<T> Mul<T> for MyF64
+where
+    T: Clone + Integer + ToPrimitive,
+{
+    type Output = MyF64;
+    #[inline]
+    fn mul(self, rhs: T) -> MyF64 {
+        MyF64 {
+            val: self.val * rhs.to_f64().unwrap(),
+        }
+    }
+}
+
+impl Add for MyF64 {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        MyF64 {
+            val: self.val + other.val,
+        }
+    }
+}
+
+impl<T> Div<T> for MyF64
+where
+    T: Clone + Integer + ToPrimitive,
+{
+    type Output = MyF64;
+    #[inline]
+    fn div(self, rhs: T) -> MyF64 {
+        MyF64 {
+            val: self.val / rhs.to_f64().unwrap(),
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Interval<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     pub start: Bound<T>,
     pub end: Bound<T>,
@@ -19,7 +147,7 @@ where
 
 // fn get_inner_bound<T>(bound: Bound<T>) -> T
 // where
-//     T: Ord + Clone + Copy,
+//  Partial   T: Ord + Clone + Copy,
 // {
 //     match bound {
 //         Bound::Included(x) => x,
@@ -30,7 +158,7 @@ where
 
 impl<T> Interval<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     pub fn new(start: Bound<T>, end: Bound<T>) -> Self {
         assert!(Interval::is_non_empty(start, end));
@@ -96,8 +224,8 @@ where
 
         // max of starts
         let start = match (self.start, other.start) {
-            (Bound::Included(s1), Bound::Included(s2)) => Bound::Included(std::cmp::max(s1, s2)),
-            (Bound::Excluded(s1), Bound::Excluded(s2)) => Bound::Excluded(std::cmp::max(s1, s2)),
+            (Bound::Included(s1), Bound::Included(s2)) => Bound::Included(s1.max(s2)),
+            (Bound::Excluded(s1), Bound::Excluded(s2)) => Bound::Excluded(s1.max(s2)),
             (Bound::Included(s1), Bound::Excluded(s2)) => if s2 >= s1 {Bound::Excluded(s2)} else {Bound::Included(s1)},
             (Bound::Excluded(s1), Bound::Included(s2)) => if s1 >= s2 {Bound::Excluded(s1)} else {Bound::Included(s2)},
             (Bound::Unbounded, _) => other.start,
@@ -106,8 +234,8 @@ where
 
         // min of ends
         let end = match (self.end, other.end) {
-            (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(std::cmp::min(e1, e2)),
-            (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(std::cmp::min(e1, e2)),
+            (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(e1.min(e2)),
+            (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(e1.min(e2)),
             (Bound::Included(e1), Bound::Excluded(e2)) => if e2 <= e1 {Bound::Excluded(e2)} else {Bound::Included(e1)},
             (Bound::Excluded(e1), Bound::Included(e2)) => if e1 <= e2 {Bound::Excluded(e1)} else {Bound::Included(e2)},
             (Bound::Unbounded, _) => other.end,
@@ -141,8 +269,8 @@ where
 
         // min of starts
         let start = match (self.start, other.start) {
-            (Bound::Included(s1), Bound::Included(s2)) => Bound::Included(std::cmp::min(s1, s2)),
-            (Bound::Excluded(s1), Bound::Excluded(s2)) => Bound::Excluded(std::cmp::min(s1, s2)),
+            (Bound::Included(s1), Bound::Included(s2)) => Bound::Included(s1.min(s2)),
+            (Bound::Excluded(s1), Bound::Excluded(s2)) => Bound::Excluded(s1.min(s2)),
             (Bound::Included(s1), Bound::Excluded(s2)) => if s1 <= s2 {Bound::Included(s1)} else {Bound::Excluded(s2)},
             (Bound::Excluded(s1), Bound::Included(s2)) => if s2 <= s1 {Bound::Included(s2)} else {Bound::Excluded(s1)},
             (Bound::Unbounded, _) => Bound::Unbounded,
@@ -151,8 +279,8 @@ where
 
         // max of ends
         let end = match (self.end, other.end) {
-            (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(std::cmp::max(e1, e2)),
-            (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(std::cmp::max(e1, e2)),
+            (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(e1.max(e2)),
+            (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(e1.max(e2)),
             (Bound::Included(e1), Bound::Excluded(e2)) => if e1 >= e2 {Bound::Included(e1)} else {Bound::Excluded(e2)},
             (Bound::Excluded(e1), Bound::Included(e2)) => if e2 >= e1 {Bound::Included(e2)} else {Bound::Excluded(e1)},
             (Bound::Unbounded, _) => Bound::Unbounded,
@@ -165,18 +293,18 @@ where
 
 impl<T> PartialEq for Interval<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     fn eq(&self, other: &Self) -> bool {
         self.start == other.start && self.end == other.end
     }
 }
 
-impl<T> Eq for Interval<T> where T: Ord + Clone + Copy {}
+impl<T> Eq for Interval<T> where T: PartialOrd + Clone + Copy + MyOrd {}
 
 impl<T> PartialOrd for Interval<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -185,7 +313,7 @@ where
 
 impl<T> Ord for Interval<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self.start, other.start) {
@@ -203,7 +331,7 @@ where
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IntervalList<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     intervals: Vec<Interval<T>>,
 
@@ -213,7 +341,7 @@ where
 
 impl<T> IntervalList<T>
 where
-    T: Ord + Clone + Copy,
+    T: PartialOrd + Clone + Copy + MyOrd,
 {
     pub fn new(intervals: Vec<Interval<T>>) -> Self {
         // Intervals are sorted and non-overlapping
@@ -363,8 +491,8 @@ where
             // Increment the pointer that points to the interval having smaller
             // end.
             let min_end = match (interval1.end, interval2.end) {
-                (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(std::cmp::min(e1, e2)),
-                (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(std::cmp::min(e1, e2)),
+                (Bound::Included(e1), Bound::Included(e2)) => Bound::Included(e1.min(e2)),
+                (Bound::Excluded(e1), Bound::Excluded(e2)) => Bound::Excluded(e1.min(e2)),
                 (Bound::Included(e1), Bound::Excluded(e2)) => if e2 <= e1 {Bound::Excluded(e2)} else {Bound::Included(e1)},
                 (Bound::Excluded(e1), Bound::Included(e2)) => if e1 <= e2 {Bound::Excluded(e1)} else {Bound::Included(e2)},
                 (Bound::Unbounded, _) => interval2.end,
@@ -408,8 +536,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use num_rational::Rational64;
-
     use super::*;
 
     #[test]
