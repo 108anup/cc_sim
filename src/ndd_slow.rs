@@ -1,11 +1,7 @@
-use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fmt::Display;
-use std::rc::{Rc, Weak};
-
-use circular_buffer::CircularBuffer;
-use serde::{Deserialize, Serialize};
+use std::rc::Rc;
 
 use crate::metrics::{CsvMetric, MetricRegistry};
 use crate::rtt_window::RTTWindow;
@@ -13,7 +9,7 @@ use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
 pub const MIN_CWND: f64 = 8.;
-pub const MIN_INTERSEND_TIME: Time = Time::from_micros(1000);  // TODO: correct value
+pub const MIN_INTERSEND_TIME: Time = Time::from_micros(1000); // TODO: correct value
 pub const PROBE_GAIN: f64 = 1.25;
 pub const MULTIPLIER: f64 = 1.125;
 
@@ -44,8 +40,7 @@ fn get_action_from_phase(_phase: u32) -> NDDFSMAction {
     let phase = _phase % CYCLE_STEPS;
     if phase == 0 {
         NDDFSMAction::FirstCruise
-    }
-    else if phase < CRUISE_STEPS {
+    } else if phase < CRUISE_STEPS {
         NDDFSMAction::Cruise
     } else if phase < CRUISE_STEPS + PROBE_STEPS {
         NDDFSMAction::Probe
@@ -70,7 +65,7 @@ struct Record {
     snd_complete: bool,
     ack_complete: bool,
 
-    cwnd: f64,  // We only change cwnd at beginning of new Record?
+    cwnd: f64, // We only change cwnd at beginning of new Record?
     phase: u32,
     action: NDDFSMAction,
 }
@@ -230,23 +225,22 @@ impl CongestionControl for NDDSlow {
         // Update records
         let mut update_cwnd = false;
         let last_record = self.records.back_mut().unwrap(); // we can only get ack if we sent something so this should always be Some
-        if _cum_ack-1 == last_record.snd_beg_seq {
+        if _cum_ack - 1 == last_record.snd_beg_seq {
             // TODO: we should do the right thing even if the equality checks
             // don't go through.
             last_record.snd_complete = true;
-            last_record.ack_beg_seq = Some(_cum_ack-1);
+            last_record.ack_beg_seq = Some(_cum_ack - 1);
             last_record.ack_beg_time = Some(now);
             update_cwnd = true;
-        } else if _cum_ack-1 < last_record.snd_beg_seq {
+        } else if _cum_ack - 1 < last_record.snd_beg_seq {
             // There must be a record before last one whose ACKs have not
             // completed
             let slr = self.records.iter_mut().rev().nth(1).unwrap(); // second last record
-            if _cum_ack-1 == slr.snd_end_seq.unwrap() {
+            if _cum_ack - 1 == slr.snd_end_seq.unwrap() {
                 slr.ack_complete = true;
-                slr.ack_end_seq = Some(_cum_ack-1);
+                slr.ack_end_seq = Some(_cum_ack - 1);
                 slr.ack_end_time = Some(now);
-            }
-            else {
+            } else {
                 // We are still getting ACKs for the second last record, it is
                 // not yet complete.
             }
@@ -287,7 +281,12 @@ impl CongestionControl for NDDSlow {
                 NDDFSMAction::FirstCruise => {
                     // complete record that happened in the probing phase gives us an
                     // estimate of the bottleneck bandwidth.
-                    let last_complete_probe = self.records.iter().rev().find(|r| r.ack_complete && r.action == NDDFSMAction::Probe).unwrap();
+                    let last_complete_probe = self
+                        .records
+                        .iter()
+                        .rev()
+                        .find(|r| r.ack_complete && r.action == NDDFSMAction::Probe)
+                        .unwrap();
                     // If a complete record exists, and we are in FirstCruise
                     // state now, then there must be a complete probe record.
 
@@ -307,7 +306,7 @@ impl CongestionControl for NDDSlow {
                     if self.target_delay > average_delay {
                         self.cwnd *= MULTIPLIER;
                     } else {
-                        self.cwnd *= 1./MULTIPLIER;
+                        self.cwnd *= 1. / MULTIPLIER;
                     }
                 }
                 NDDFSMAction::Cruise => {
@@ -380,7 +379,10 @@ impl CongestionControl for NDDSlow {
     }
 
     fn get_intersend_time(&mut self) -> Time {
-        std::cmp::max(MIN_INTERSEND_TIME, Time::from_micros((2e6 * self.base_rtt.get_srtt().secs() / self.cwnd) as u64))
+        std::cmp::max(
+            MIN_INTERSEND_TIME,
+            Time::from_micros((2e6 * self.base_rtt.get_srtt().secs() / self.cwnd) as u64),
+        )
     }
 
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
