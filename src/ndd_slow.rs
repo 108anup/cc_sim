@@ -304,10 +304,15 @@ impl CongestionControl for NDDSlow {
                         // F = average ACK rate in all the cruise states
                         let mut f_estimate_num = 0;
                         let mut f_estimate_den = 0.;
-                        for r in self.records.iter() {
+                        let mut count = 0;
+                        for r in self.records.iter().rev() {
                             if r.ack_complete && r.action == NDDFSMAction::Cruise {
                                 f_estimate_num += r.acked_pkts();
                                 f_estimate_den += r.ack_duration();
+                            }
+                            count += 1;
+                            if count > CRUISE_STEPS / 2 {
+                                break;
                             }
                         }
                         self.f_estimate = f_estimate_num as f64 / f_estimate_den;
@@ -321,11 +326,16 @@ impl CongestionControl for NDDSlow {
 
                         // TODO: Damp the multiplier based on gap between
                         // target and actual delay.
-                        if self.target_delay > average_delay {
-                            self.cwnd *= MULTIPLIER;
-                        } else {
-                            self.cwnd *= 1. / MULTIPLIER;
-                        }
+                        let target_cwnd = self.cwnd * self.target_delay / average_delay;
+                        let max_cwnd = MULTIPLIER * self.cwnd;
+                        let min_cwnd = self.cwnd / MULTIPLIER;
+                        let mean_cwnd = (self.cwnd + target_cwnd) / 2.;
+                        self.cwnd = f64::max(min_cwnd, f64::min(max_cwnd, mean_cwnd));
+                        // if self.target_delay > average_delay {
+                        //     self.cwnd *= MULTIPLIER;
+                        // } else {
+                        //     self.cwnd *= 1. / MULTIPLIER;
+                        // }
                     } else {
                         // If we don't have a complete probe record, then we
                         // don't have an estimate of the bottleneck bandwidth.
