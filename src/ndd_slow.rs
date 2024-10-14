@@ -32,6 +32,7 @@ enum NDDFSMAction {
     SlowStart,
     FirstCruise,
     Cruise,
+    FirstProbe,
     Probe,
     Drain,
 }
@@ -42,6 +43,8 @@ fn get_action_from_phase(_phase: u32) -> NDDFSMAction {
         NDDFSMAction::FirstCruise
     } else if phase < CRUISE_STEPS {
         NDDFSMAction::Cruise
+    } else if phase == CRUISE_STEPS {
+        NDDFSMAction::FirstProbe
     } else if phase < CRUISE_STEPS + PROBE_STEPS {
         NDDFSMAction::Probe
     } else {
@@ -122,6 +125,7 @@ pub struct NDDSlow {
     records: VecDeque<Record>,
     cwnd: f64,
     prev_cwnd: f64,
+    cruise_cwnd: f64,
     phase: u32,
     action: NDDFSMAction,
 
@@ -189,6 +193,7 @@ impl Default for NDDSlow {
             records: VecDeque::new(),
             cwnd: MIN_CWND,
             prev_cwnd: MIN_CWND,
+            cruise_cwnd: MIN_CWND,
             phase: 0,
             action: NDDFSMAction::SlowStart,
             f_estimate: 0.,
@@ -254,7 +259,6 @@ impl CongestionControl for NDDSlow {
         // Update cwnd
         if update_cwnd {
             self.prev_cwnd = self.cwnd;
-
             self.phase = (self.phase + 1) % CYCLE_STEPS;
             self.action = get_action_from_phase(self.phase);
             let last_complete_record = self.records.iter().rev().find(|r| r.ack_complete);
@@ -277,46 +281,69 @@ impl CongestionControl for NDDSlow {
                     } else {
                         self.cwnd *= 1. / 2.;
                     }
+                    self.cruise_cwnd = self.cwnd;
                 }
                 NDDFSMAction::FirstCruise => {
                     // complete record that happened in the probing phase gives us an
                     // estimate of the bottleneck bandwidth.
-                    let last_complete_probe = self
+                    let opt_last_complete_probe = self
                         .records
                         .iter()
                         .rev()
-                        .find(|r| r.ack_complete && r.action == NDDFSMAction::Probe)
-                        .unwrap();
-                    // If a complete record exists, and we are in FirstCruise
-                    // state now, then there must be a complete probe record.
+                        .find(|r| r.ack_complete && r.action == NDDFSMAction::Probe);
 
-                    // F = average ACK rate in all the cruise states
-                    let mut f_estimate_num = 0;
-                    let mut f_estimate_den = 0.;
-                    for r in self.records.iter() {
-                        if r.ack_complete && r.action == NDDFSMAction::Cruise {
-                            f_estimate_num += r.acked_pkts();
-                            f_estimate_den += r.ack_duration();
+                    // NOTE: it may be that the last complete record is slow
+                    // start. We could try to find a record for which sending
+                    // rate more than ACK rate.
+
+                    // DEPRECATED: If a complete record exists, and we are in
+                    // FirstCruise state now, then there must be a complete
+                    // probe record.
+
+                    if let Some(last_complete_probe) = opt_last_complete_probe {
+                        // F = average ACK rate in all the cruise states
+                        let mut f_estimate_num = 0;
+                        let mut f_estimate_den = 0.;
+                        for r in self.records.iter() {
+                            if r.ack_complete && r.action == NDDFSMAction::Cruise {
+                                f_estimate_num += r.acked_pkts();
+                                f_estimate_den += r.ack_duration();
+                            }
                         }
-                    }
-                    self.f_estimate = f_estimate_num as f64 / f_estimate_den;
-                    self.n_estimate = last_complete_probe.n_estimate(self.f_estimate);
-                    self.target_delay = self.n_estimate * self.min_rtt.secs();
+                        self.f_estimate = f_estimate_num as f64 / f_estimate_den;
+                        self.n_estimate =
+                            if last_complete_probe.ack_rate() >= last_complete_probe.snd_rate() {
+                                1.
+                            } else {
+                                last_complete_probe.n_estimate(self.f_estimate)
+                            };
+                        self.target_delay = self.n_estimate * self.min_rtt.secs();
 
-                    if self.target_delay > average_delay {
-                        self.cwnd *= MULTIPLIER;
+                        // TODO: Damp the multiplier based on gap between
+                        // target and actual delay.
+                        if self.target_delay > average_delay {
+                            self.cwnd *= MULTIPLIER;
+                        } else {
+                            self.cwnd *= 1. / MULTIPLIER;
+                        }
                     } else {
-                        self.cwnd *= 1. / MULTIPLIER;
+                        // If we don't have a complete probe record, then we
+                        // don't have an estimate of the bottleneck bandwidth.
+                        // Emulate regular Cruise in this case.
                     }
+                    self.cruise_cwnd = self.cwnd;
                 }
                 NDDFSMAction::Cruise => {
                     // Do nothing
                 }
-                NDDFSMAction::Probe => {
+                NDDFSMAction::FirstProbe => {
                     self.cwnd *= PROBE_GAIN;
                 }
+                NDDFSMAction::Probe => {
+                    // Do nothing
+                }
                 NDDFSMAction::Drain => {
-                    self.cwnd = self.prev_cwnd;
+                    self.cwnd = self.cruise_cwnd;
                 }
             }
             self.cwnd = f64::max(MIN_CWND, self.cwnd);
@@ -395,6 +422,10 @@ impl CongestionControl for NDDSlow {
                 .unwrap()
                 .register_csv_metric(metric_name, NDDAckMetric::get_columns());
         }
+        // TODO: replace with pseudo-random number generator with a controlled
+        // seed for reproducing results. Each flow should get a different
+        // random number though.
+        self.phase = rand::random::<u32>() % CYCLE_STEPS;
     }
 
     fn finish(&self) {

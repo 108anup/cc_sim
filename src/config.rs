@@ -47,6 +47,7 @@ pub enum CCConfig {
     Copa,
     Copa2,
     NDD,
+    NDDSlow,
 }
 
 /// A group of senders
