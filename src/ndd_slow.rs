@@ -13,8 +13,8 @@ pub const MIN_INTERSEND_TIME: Time = Time::from_micros(1000); // TODO: correct v
 pub const PROBE_GAIN: f64 = 1.25;
 pub const MULTIPLIER: f64 = 1.125;
 
-pub const CRUISE_STEPS: u32 = 10;
-pub const PROBE_STEPS: u32 = 2;
+pub const CRUISE_STEPS: u32 = 50;
+pub const PROBE_STEPS: u32 = 1;
 pub const DRAIN_STEPS: u32 = 1;
 pub const CYCLE_STEPS: u32 = PROBE_STEPS + DRAIN_STEPS + CRUISE_STEPS;
 // Currently a step is RTT.
@@ -71,6 +71,9 @@ struct Record {
     cwnd: f64, // We only change cwnd at beginning of new Record?
     phase: u32,
     action: NDDFSMAction,
+
+    rtt_sum: Option<Time>,
+    rtt_count: u64,
 }
 
 // Convention: we change cwnd at the boundary of a record. Every new record
@@ -115,6 +118,23 @@ impl Record {
     fn ack_duration(&self) -> f64 {
         let dur = self.ack_end_time.unwrap() - self.ack_beg_time.unwrap();
         dur.secs()
+    }
+
+    fn add_rtt_sample(&mut self, rtt: Time) {
+        self.rtt_count += 1;
+        if self.rtt_sum.is_none() {
+            self.rtt_sum = Some(rtt);
+        } else {
+            self.rtt_sum = Some(self.rtt_sum.unwrap() + rtt);
+        }
+    }
+
+    fn get_average_rtt_secs(&self) -> Option<f64> {
+        if self.rtt_count == 0 {
+            None
+        } else {
+            Some(self.rtt_sum.unwrap().secs() / self.rtt_count as f64)
+        }
     }
 }
 
@@ -223,8 +243,6 @@ impl CongestionControl for NDDSlow {
             now,
         );
         self.min_rtt = self.min_rtt.min(rtt);
-        let average_delay = (self.base_rtt.get_srtt() - self.min_rtt).secs();
-        let inst_delay = rtt - self.min_rtt;
 
         // ---------------------------------------------------------------------
         // Update records
@@ -237,10 +255,12 @@ impl CongestionControl for NDDSlow {
             last_record.ack_beg_seq = Some(_cum_ack - 1);
             last_record.ack_beg_time = Some(now);
             update_cwnd = true;
+            last_record.add_rtt_sample(rtt);
         } else if _cum_ack - 1 < last_record.snd_beg_seq {
             // There must be a record before last one whose ACKs have not
             // completed
             let slr = self.records.iter_mut().rev().nth(1).unwrap(); // second last record
+            slr.add_rtt_sample(rtt);
             if _cum_ack - 1 == slr.snd_end_seq.unwrap() {
                 slr.ack_complete = true;
                 slr.ack_end_seq = Some(_cum_ack - 1);
@@ -249,11 +269,37 @@ impl CongestionControl for NDDSlow {
                 // We are still getting ACKs for the second last record, it is
                 // not yet complete.
             }
+        } else {
+            // This can happen if there are cumulative ACKs and we jump from
+            // before last record to after last record. Or maybe even if there
+            // are losses. For now assume all packets are ACKed and there are
+            // no losses.
+            if _cum_ack - 1 <= last_record.snd_end_seq.unwrap() {
+                last_record.add_rtt_sample(rtt);
+            } else {
+                panic!(
+                    "Got unexpected cum ACK."
+                );
+            }
         }
 
         while self.records.len() > N_RECORDS {
             self.records.pop_front();
         }
+
+        // Average RTT
+        // let average_delay = (self.base_rtt.get_srtt() - self.min_rtt).secs();
+        let inst_delay = rtt - self.min_rtt;
+        let mut avg_rtt_num = 0.;
+        let mut avg_rtt_den = 0;
+        for r in self.records.iter() {
+            if r.rtt_count == 0 {
+                continue;
+            }
+            avg_rtt_num += r.get_average_rtt_secs().unwrap() * r.rtt_count as f64;
+            avg_rtt_den += r.rtt_count;
+        }
+        let average_delay = (avg_rtt_num / avg_rtt_den as f64) - self.min_rtt.secs();
 
         // ---------------------------------------------------------------------
         // Update cwnd
@@ -290,7 +336,7 @@ impl CongestionControl for NDDSlow {
                         .records
                         .iter()
                         .rev()
-                        .find(|r| r.ack_complete && r.action == NDDFSMAction::Probe);
+                        .find(|r| r.ack_complete && (r.action == NDDFSMAction::Probe || r.action == NDDFSMAction::FirstProbe));
 
                     // NOTE: it may be that the last complete record is slow
                     // start. We could try to find a record for which sending
@@ -304,16 +350,16 @@ impl CongestionControl for NDDSlow {
                         // F = average ACK rate in all the cruise states
                         let mut f_estimate_num = 0;
                         let mut f_estimate_den = 0.;
-                        let mut count = 0;
+                        // let mut count = 0;
                         for r in self.records.iter().rev() {
                             if r.ack_complete && r.action == NDDFSMAction::Cruise {
                                 f_estimate_num += r.acked_pkts();
                                 f_estimate_den += r.ack_duration();
                             }
-                            count += 1;
-                            if count > CRUISE_STEPS / 2 {
-                                break;
-                            }
+                            // count += 1;
+                            // if count > CRUISE_STEPS / 2 {
+                            //     break;
+                            // }
                         }
                         self.f_estimate = f_estimate_num as f64 / f_estimate_den;
                         self.n_estimate =
@@ -326,11 +372,17 @@ impl CongestionControl for NDDSlow {
 
                         // TODO: Damp the multiplier based on gap between
                         // target and actual delay.
-                        let target_cwnd = self.cwnd * self.target_delay / average_delay;
                         let max_cwnd = MULTIPLIER * self.cwnd;
                         let min_cwnd = self.cwnd / MULTIPLIER;
-                        let mean_cwnd = (self.cwnd + target_cwnd) / 2.;
-                        self.cwnd = f64::max(min_cwnd, f64::min(max_cwnd, mean_cwnd));
+                        if average_delay <= 0. {
+                            self.cwnd = max_cwnd;
+                        }
+                        else {
+                            let target_cwnd = self.cwnd * self.target_delay / average_delay;
+                            let mean_cwnd = (self.cwnd + target_cwnd) / 2.;
+                            self.cwnd = f64::max(min_cwnd, f64::min(max_cwnd, mean_cwnd));
+                        }
+
                         // if self.target_delay > average_delay {
                         //     self.cwnd *= MULTIPLIER;
                         // } else {
@@ -397,6 +449,8 @@ impl CongestionControl for NDDSlow {
                 cwnd: self.cwnd,
                 phase: self.phase,
                 action: self.action,
+                rtt_sum: None,
+                rtt_count: 0,
             });
         } else {
             let last_record = self.records.back_mut().unwrap();
@@ -435,7 +489,8 @@ impl CongestionControl for NDDSlow {
         // TODO: replace with pseudo-random number generator with a controlled
         // seed for reproducing results. Each flow should get a different
         // random number though.
-        self.phase = rand::random::<u32>() % CYCLE_STEPS;
+        // self.phase = rand::random::<u32>() % CYCLE_STEPS;
+        self.phase = (2 * str::parse::<u32>(name).unwrap()) % CYCLE_STEPS;
     }
 
     fn finish(&self) {
