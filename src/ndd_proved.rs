@@ -4,14 +4,27 @@ use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
 pub struct NDDProved {
-    min_rtt: Time,
-    probe_ongoing: bool,
+    // PARAMETERS
+    p_jitter_tolerance: Time,      // D
+    p_cruise_quanta: Time,
+    p_cruise_quanta_count: u32,    // T in units of quanta.
+    p_cwnd_averaging_factor: f32,  // alpha
+    p_cwnd_clamp_high: f64,        // delta1
+    p_cwnd_clamp_low: f64,         // delta2
+    p_probe_multiplier: f64,       // gamma1
+    p_gamma2: f64,                 // gamma1 * (T+D)/T
+    p_gamma3: f64,                 // gamma1 * (T-D)/T
 
-    cruise_quanta: Time,
-    cruise_quanta_count: u32,
+    // STATE
+    s_min_rtt: Time,
 
-    first_seq_of_probe: Option<SeqNum>,
-    last_seq_of_probe: Option<SeqNum>,
+    // Collision slot state
+    s_slot_start_time: Time,
+
+    // Probe state
+    s_probe_ongoing: bool,
+    s_first_seq_of_probe: Option<SeqNum>,
+    s_last_seq_of_probe: Option<SeqNum>,
 }
 
 impl CongestionControl for NDDProved {
@@ -73,5 +86,12 @@ impl NDDProved {
         if self.is_ack_part_of_excess_duration(ack) {
             // update excess delay
         }
+    }
+
+    fn slot_ended() -> bool {
+        // Slot duration is max {max rtprop + queueing delay, T}
+
+        // TODO: Need to decide which queueing delay measurement to consider
+        // here, so that all flows have roughly similar slot sizes.
     }
 }
