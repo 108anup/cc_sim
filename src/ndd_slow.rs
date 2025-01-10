@@ -14,7 +14,7 @@ pub const PROBE_GAIN: f64 = 1.25;
 pub const MULTIPLIER: f64 = 1.125;
 
 pub const CRUISE_STEPS: u32 = 50;
-pub const PROBE_STEPS: u32 = 1;
+pub const PROBE_STEPS: u32 = 4;
 pub const DRAIN_STEPS: u32 = 1;
 pub const CYCLE_STEPS: u32 = PROBE_STEPS + DRAIN_STEPS + CRUISE_STEPS;
 // Currently a step is RTT.

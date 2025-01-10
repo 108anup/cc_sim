@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 100000000,
+  "sim_dur": 500000000,
   "log": {
     "out_terminal": "png",
     "out_file": "dumbbell_ndd.png",
