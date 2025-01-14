@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -157,6 +159,30 @@ pub struct NDDProved {
     s_probe_excess_amount: u64, // packets
 }
 
+impl Display for NDDProved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // output all the parameters
+        writeln!(f, "NDDProved parameters:")?;
+        writeln!(f, "p_rng_seed: {}", self.p_rng_seed)?;
+        writeln!(f, "p_cruise_quanta: {}", self.p_cruise_quanta)?;
+        writeln!(f, "p_cruise_quanta_count: {}", self.p_cruise_quanta_count)?;
+        writeln!(f, "p_cwnd_averaging_factor: {}", self.p_cwnd_averaging_factor)?;
+        writeln!(f, "p_cwnd_clamp_high: {}", self.p_cwnd_clamp_high)?;
+        writeln!(f, "p_cwnd_clamp_low: {}", self.p_cwnd_clamp_low)?;
+        writeln!(f, "p_probe_multiplier: {}", self.p_probe_multiplier)?;
+        writeln!(f, "p_probe_duration: {}", self.p_probe_duration)?;
+        writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_delay)?;
+        writeln!(f, "p_slot_load_factor: {}", self.p_slot_load_factor)?;
+        writeln!(f, "p_probe_probability: {}", self.p_probe_probability)?;
+        writeln!(f, "p_max_flow_count: {}", self.p_max_flow_count)?;
+        writeln!(f, "p_jitter_tolerance: {}", self.p_jitter_tolerance)?;
+        writeln!(f, "p_max_rtprop: {}", self.p_max_rtprop)?;
+        writeln!(f, "p_min_cwnd: {}", self.p_min_cwnd)?;
+        writeln!(f, "p_min_intersend_time: {}", self.p_min_intersend_time)?;
+        Ok(())
+    }
+}
+
 impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
@@ -229,6 +255,9 @@ impl CongestionControl for NDDProved {
         self.reset_round_state();
         self.reset_probe_state();
         self.rng = StdRng::seed_from_u64(self.p_rng_seed);
+
+        println!("Initialized NDDProved {}", name);
+        println!("{}", self);
     }
 
     fn finish(&self) {
@@ -502,7 +531,7 @@ impl Default for NDDProved {
             // we only use this for srtt which is independent of hist_period,
             // so any value here is okay.
             s_srtt: RTTWindow::new(Time::from_secs(10)),
-            s_min_rtt: Time::from_millis(0),
+            s_min_rtt: max_rtprop,
             s_cwnd: min_cwnd,
 
             s_tot_tx: 0,

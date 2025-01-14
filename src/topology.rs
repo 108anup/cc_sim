@@ -5,6 +5,7 @@ use crate::copa;
 use crate::copa2;
 use crate::ndd;
 use crate::ndd_slow;
+use crate::ndd_proved;
 use crate::simulator::*;
 use crate::tracer::Tracer;
 use crate::transport::*;
@@ -52,6 +53,7 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
                 CCConfig::Copa2 => Box::new(copa2::Copa2::new(group_config.delay)),
                 CCConfig::NDD => Box::new(ndd::NDD::default()),
                 CCConfig::NDDSlow => Box::new(ndd_slow::NDDSlow::default()),
+                CCConfig::NDDProved => Box::new(ndd_proved::NDDProved::default()),
             };
 
             // Decide everybody's ids

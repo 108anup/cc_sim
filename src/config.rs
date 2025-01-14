@@ -48,6 +48,7 @@ pub enum CCConfig {
     Copa2,
     NDD,
     NDDSlow,
+    NDDProved,
 }
 
 /// A group of senders

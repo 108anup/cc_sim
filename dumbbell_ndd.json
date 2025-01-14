@@ -30,7 +30,7 @@
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDSlow",
+        "cc": "NDDProved",
         "start_time": 0,
         "tx_length": "Infinite"
       }
