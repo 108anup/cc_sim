@@ -2,8 +2,6 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::metrics::{CsvMetric, MetricRegistry};
-use crate::ndd::MIN_CWND;
-use crate::random;
 use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
@@ -36,6 +34,8 @@ struct CruiseRecord {
     end_tot_rx: Option<u64>,
     end_tot_ld: Option<u64>,
     end_seq: Option<SeqNum>,
+
+    probe_ongoing: bool,
 }
 
 impl CruiseRecord {
@@ -45,6 +45,7 @@ impl CruiseRecord {
         start_tot_rx: u64,
         start_tot_ld: u64,
         start_seq: SeqNum,
+        probe_ongoing: bool,
     ) -> Self {
         CruiseRecord {
             start_time,
@@ -57,6 +58,7 @@ impl CruiseRecord {
             end_tot_rx: None,
             end_tot_ld: None,
             end_seq: None,
+            probe_ongoing,
         }
     }
 
@@ -165,6 +167,8 @@ impl CongestionControl for NDDProved {
         // TODO: timeout min_rtt estimate
 
         // ? split into measurement updates and cwnd action?
+        self.check_update_cruise_state_and_rate(now, cum_ack);
+
         if self.s_probe_ongoing {
             self.update_excess_delay_if_allowed(cum_ack, rtt);
             if self.should_initiate_probe_end(now, rtt) {
@@ -172,15 +176,10 @@ impl CongestionControl for NDDProved {
             } else if self.should_end_probe(cum_ack) {
                 self.end_probe();
                 self.update_cwnd();
+                self.start_new_slot(now, rtt); // ? should we start new slot here?
             }
+
         } else {
-            // Since I am not probing, I can estimate cruise rate, otherwise
-            // cruise will overestimate.
-            self.check_update_cruise_state_and_rate(now, cum_ack);
-            // TODO: we want to update cruise state (cruise slots) even when
-            // there are probes. Otherwise, cruise rate will be underestimated
-            // (as there will be time gaps). We want to mark such quantas as
-            // probing so that we do not use them for cruise rate estimation.
             self.update_communicated_flow_count(now, rtt);
             self.update_slot_state(now, rtt);
             if self.slot_ended(now) {
@@ -337,7 +336,12 @@ impl NDDProved {
     fn check_update_cruise_state_and_rate(&mut self, now: Time, ack: SeqNum) {
         if self.s_cruise_records.is_empty() {
             self.add_cruise_entry(now, ack);
-        } else if self.cruise_quanta_elapsed(now) {
+        }
+
+        let last_record: &mut CruiseRecord = self.s_cruise_records.last_mut().unwrap();
+        last_record.probe_ongoing = last_record.probe_ongoing || self.s_probe_ongoing;
+
+        if self.cruise_quanta_elapsed(now) {
             self.fill_cruise_entry(now, ack);
             self.update_cruise_rate();
             self.add_cruise_entry(now, ack);
@@ -365,12 +369,14 @@ impl NDDProved {
             self.s_tot_rx,
             self.s_tot_ld,
             ack,
+            self.s_probe_ongoing,
         ));
     }
 
     fn update_cruise_rate(&mut self) {
-        let last_cruise_rate = self.s_cruise_records.last().unwrap().get_ack_rate();
-        if self.s_cruise_rate_this_round > last_cruise_rate {
+        let last_record = self.s_cruise_records.last().unwrap();
+        let last_cruise_rate = last_record.get_ack_rate();
+        if self.s_cruise_rate_this_round > last_cruise_rate && !last_record.probe_ongoing {
             self.s_cruise_rate_this_round = last_cruise_rate;
         }
     }
