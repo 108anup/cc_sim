@@ -108,7 +108,7 @@ pub struct NDDProved {
     p_probe_multiplier: f64,      // gamma1
     // p_gamma2: f64,             // gamma1 * (T+D)/T
     // p_gamma3: f64,             // gamma1 * (T-D)/T
-    p_probe_duration: Time,       // This can really be anything
+    p_probe_duration: Time, // This can really be anything
     p_contract_min_delay: Time,
     p_slot_load_factor: u64,
     p_probe_probability: f64, // = 1/(p_slot_load_factor * p_max_flow_count), so that in expectation we have one probe per round.
@@ -166,7 +166,11 @@ impl Display for NDDProved {
         writeln!(f, "p_rng_seed: {}", self.p_rng_seed)?;
         writeln!(f, "p_cruise_quanta: {}", self.p_cruise_quanta)?;
         writeln!(f, "p_cruise_quanta_count: {}", self.p_cruise_quanta_count)?;
-        writeln!(f, "p_cwnd_averaging_factor: {}", self.p_cwnd_averaging_factor)?;
+        writeln!(
+            f,
+            "p_cwnd_averaging_factor: {}",
+            self.p_cwnd_averaging_factor
+        )?;
         writeln!(f, "p_cwnd_clamp_high: {}", self.p_cwnd_clamp_high)?;
         writeln!(f, "p_cwnd_clamp_low: {}", self.p_cwnd_clamp_low)?;
         writeln!(f, "p_probe_multiplier: {}", self.p_probe_multiplier)?;
@@ -204,7 +208,6 @@ impl CongestionControl for NDDProved {
                 self.update_cwnd();
                 self.start_new_slot(now, rtt); // ? should we start new slot here?
             }
-
         } else {
             self.update_communicated_flow_count(now, rtt);
             self.update_slot_state(now, rtt);
@@ -215,12 +218,14 @@ impl CongestionControl for NDDProved {
 
                 self.start_new_slot(now, rtt);
 
-                if self.s_slots_till_now_in_this_round > 1 && self.should_start_probe() {
+                if self.s_slots_till_now_in_this_round > 1 {
                     // NOTE: the slots > 1 allows us to have at least one
                     // cruise slot before any probe. Since round of flows need
                     // not overlap, this does not necessarily affect collision
                     // probability.
-                    self.start_probe(now);
+                    if self.should_start_probe() {
+                        self.start_probe(now);
+                    }
                 }
             }
         }
@@ -330,7 +335,7 @@ impl NDDProved {
         if next_cwnd < self.p_min_cwnd {
             next_cwnd = self.p_min_cwnd;
         }
-        self.s_cwnd = next_cwnd;
+        self.s_cwnd = f64::ceil(next_cwnd);
     }
 
     fn start_probe(&mut self, now: Time) {
@@ -463,7 +468,8 @@ impl NDDProved {
     }
 
     fn round_ended(&self) -> bool {
-        self.s_slots_till_now_in_this_round >= self.p_max_flow_count
+        self.s_slots_till_now_in_this_round
+            >= self.p_max_flow_count * self.p_slot_load_factor as u64
     }
 
     fn reset_round_state(&mut self) {
@@ -474,7 +480,7 @@ impl NDDProved {
         self.s_slots_till_now_in_this_round = 0; // count
         self.s_communicated_flow_count_this_round = self.p_max_flow_count as f64; // min
         self.s_cruise_records.clear();
-        self.s_cruise_rate_this_round = 0.;  // max
+        self.s_cruise_rate_this_round = 0.; // max
 
         // self.s_queueing_delay_records.clear();  // min
 
@@ -486,7 +492,6 @@ impl NDDProved {
         // self.s_cruise_rate_this_round = last_record.get_ack_rate();  // max
         // self.s_cruise_records.clear();
         // self.s_cruise_records.push(last_record);
-
     }
 
     fn should_start_probe(&mut self) -> bool {
@@ -497,13 +502,13 @@ impl NDDProved {
 impl Default for NDDProved {
     fn default() -> Self {
         let rng_seed = 42;
-        let t_by_d = 4;  // T/D, duration of cruise measurement relative to jitter.
+        let t_by_d = 4; // T/D, duration of cruise measurement relative to jitter.
         let cruise_quanta_factor = 5;
         let jitter_belief = Time::from_millis(10);
         let max_rtprop = Time::from_millis(100);
         let slot_load_factor = 3;
         let max_flow_count = 10;
-        let min_cwnd = 2.;  // packets
+        let min_cwnd = 2.; // packets
 
         NDDProved {
             metric_registry: None,
@@ -516,10 +521,10 @@ impl Default for NDDProved {
             p_cwnd_clamp_high: 1.2,
             p_cwnd_clamp_low: 1.1,
             p_probe_multiplier: 4.,
-            p_probe_duration: jitter_belief,  // ?
-            p_contract_min_delay: Time::from_micros(max_rtprop.micros() / 2),  // ? ceil vs floor
+            p_probe_duration: jitter_belief, // ?
+            p_contract_min_delay: Time::from_micros(max_rtprop.micros() / 2), // ? ceil vs floor
             p_slot_load_factor: slot_load_factor,
-            p_probe_probability: 1./((slot_load_factor as f64) * (max_flow_count as f64)),
+            p_probe_probability: 1. / ((slot_load_factor as f64) * (max_flow_count as f64)),
 
             p_max_flow_count: max_flow_count,
             p_jitter_tolerance: jitter_belief,
@@ -544,7 +549,6 @@ impl Default for NDDProved {
             s_slots_till_now_in_this_round: 0,
             s_communicated_flow_count_this_round: max_flow_count as f64,
             // s_queueing_delay_records: Vec::new(),
-
             s_cruise_rate_this_round: 0.,
             s_cruise_records: Vec::new(),
 
@@ -555,6 +559,32 @@ impl Default for NDDProved {
             s_last_seq_of_probe: None,
             s_probe_excess_delay: Time::from_millis(0),
             s_probe_excess_amount: 0,
+        }
+    }
+}
+
+// test the rng
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rng() {
+        let mut ndd = NDDProved::default();
+        let n_exp = 10;
+        let n_samples = 30 as u64;
+        for exp_id in 0..n_exp {
+            let mut positive = 0;
+            for sample_id in 0..n_samples {
+                let this_sample = ndd.should_start_probe();
+                positive += this_sample as u64;
+            }
+            println!(
+                "Exp {}: Positive rate: {} Expected rate: {}",
+                exp_id,
+                positive as f64 / n_samples as f64,
+                ndd.p_probe_probability
+            );
         }
     }
 }
