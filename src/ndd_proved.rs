@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::fmt::Display;
+use std::rc::Rc;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -93,9 +95,13 @@ struct DelayRecord {
 }
 
 pub struct NDDProved {
-    metric_registry: Option<MetricRegistry>,
     rng: StdRng,
     p_rng_seed: u64,
+
+    // -------------------------------------------------------------------------
+    // METRICS
+    metric_registry: Option<MetricRegistry>,
+    slot_metric: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -187,6 +193,48 @@ impl Display for NDDProved {
     }
 }
 
+struct SlotMetric {
+    start_time: Time,
+    end_time: Time,
+    queueing_delay: Time,
+    communicated_flow_count: f64,
+    cruise_rate: f64,
+    cruise_happened: bool,
+    probe_happened: bool,
+    round_ended: bool,
+    cwnd: f64,
+}
+
+impl SlotMetric {
+    fn to_row(&self) -> Vec<String> {
+        vec![
+            self.start_time.to_string(),
+            self.end_time.to_string(),
+            self.queueing_delay.to_string(),
+            self.communicated_flow_count.to_string(),
+            self.cruise_rate.to_string(),
+            self.cruise_happened.to_string(),
+            self.probe_happened.to_string(),
+            self.round_ended.to_string(),
+            self.cwnd.to_string(),
+        ]
+    }
+
+    fn get_columns() -> Vec<String> {
+        vec![
+            "start_time".to_string(),
+            "end_time".to_string(),
+            "queueing_delay".to_string(),
+            "communicated_flow_count".to_string(),
+            "cruise_rate".to_string(),
+            "cruise_happened".to_string(),
+            "probe_happened".to_string(),
+            "round_ended".to_string(),
+            "cwnd".to_string(),
+        ]
+    }
+}
+
 impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
@@ -199,33 +247,40 @@ impl CongestionControl for NDDProved {
         // ? split into measurement updates and cwnd action?
         self.check_update_cruise_state_and_rate(now, cum_ack);
 
+        let mut probe_ended = false;
+        let mut cruise_ended = false;
         if self.s_probe_ongoing {
             self.update_excess_delay_if_allowed(cum_ack, rtt);
             if self.should_initiate_probe_end(now, rtt) {
                 self.initiate_probe_end();
             } else if self.should_end_probe(cum_ack) {
                 self.end_probe();
-                self.update_cwnd();
-                self.start_new_slot(now, rtt); // ? should we start new slot here?
+                self.update_cwnd_after_probe();
+                probe_ended = true;
             }
         } else {
+            // cruise ongoing
             self.update_communicated_flow_count(now, rtt);
             self.update_slot_state(now, rtt);
-            if self.slot_ended(now) {
-                if self.round_ended() {
-                    self.reset_round_state()
-                }
+            cruise_ended = self.slot_ended(now);
+        }
 
-                self.start_new_slot(now, rtt);
+        if cruise_ended || probe_ended {
+            // slot ended
+            let round_ended = self.round_ended();
+            if round_ended {
+                self.reset_round_state()
+            }
+            self.log_slot_metric(now, cruise_ended, probe_ended, round_ended);
 
-                if self.s_slots_till_now_in_this_round > 1 {
-                    // NOTE: the slots > 1 allows us to have at least one
-                    // cruise slot before any probe. Since round of flows need
-                    // not overlap, this does not necessarily affect collision
-                    // probability.
-                    if self.should_start_probe() {
-                        self.start_probe(now);
-                    }
+            self.start_new_slot(now, rtt);
+            if self.s_slots_till_now_in_this_round > 1 {
+                // NOTE: the slots > 1 allows us to have at least one
+                // cruise slot before any probe. Since round of flows need
+                // not overlap, this does not necessarily affect collision
+                // probability.
+                if self.should_start_probe() {
+                    self.start_probe(now);
                 }
             }
         }
@@ -257,6 +312,13 @@ impl CongestionControl for NDDProved {
         if let Some(metrics_config_file) = metrics_config_file {
             self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
         }
+        let metric_name: &str = &(name.to_owned() + "slot");
+        self.slot_metric = self
+                .metric_registry
+                .as_mut()
+                .unwrap()
+                .register_csv_metric(metric_name, SlotMetric::get_columns());
+
         self.reset_round_state();
         self.reset_probe_state();
         self.rng = StdRng::seed_from_u64(self.p_rng_seed);
@@ -316,7 +378,7 @@ impl NDDProved {
         self.s_probe_ongoing = false;
     }
 
-    fn update_cwnd(&mut self) {
+    fn update_cwnd_after_probe(&mut self) {
         let bandwidth_estimate =
             (self.s_probe_excess_amount as f64) / self.s_probe_excess_delay.secs(); // packets per second
         let flow_count_estimate = bandwidth_estimate / self.s_cruise_rate_this_round;
@@ -497,6 +559,22 @@ impl NDDProved {
     fn should_start_probe(&mut self) -> bool {
         self.rng.gen_bool(self.p_probe_probability)
     }
+
+    fn log_slot_metric(&self, now: Time, cruise_ended: bool, probe_ended: bool, round_ended: bool) {
+        self.slot_metric.as_ref().unwrap().borrow_mut().log(
+            SlotMetric {
+                start_time: self.s_slot_start_time,
+                end_time: now,
+                queueing_delay: self.s_slot_queueing_delay,
+                communicated_flow_count: self.s_communicated_flow_count_this_round,
+                cruise_rate: self.s_cruise_rate_this_round,
+                cruise_happened: cruise_ended,
+                probe_happened: probe_ended,
+                round_ended,
+                cwnd: self.s_cwnd,
+            }.to_row()
+        );
+    }
 }
 
 impl Default for NDDProved {
@@ -511,9 +589,11 @@ impl Default for NDDProved {
         let min_cwnd = 2.; // packets
 
         NDDProved {
-            metric_registry: None,
             rng: StdRng::seed_from_u64(rng_seed),
             p_rng_seed: rng_seed,
+
+            metric_registry: None,
+            slot_metric: None,
 
             p_cruise_quanta: Time::from_micros(jitter_belief.micros() / cruise_quanta_factor), // ? ceil vs floor
             p_cruise_quanta_count: t_by_d * cruise_quanta_factor,
