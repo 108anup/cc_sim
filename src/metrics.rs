@@ -64,6 +64,10 @@ impl CsvMetric {
     pub fn log(&mut self, row: Vec<String>) {
         self.rows.push(row);
     }
+
+    pub fn get_row_count(&self) -> usize {
+        self.rows.len()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
