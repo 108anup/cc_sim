@@ -3,6 +3,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub trait Metric {
     fn enable(&self) -> bool;
@@ -67,6 +68,45 @@ impl CsvMetric {
 
     pub fn get_row_count(&self) -> usize {
         self.rows.len()
+    }
+}
+
+pub trait CsvMetricStruct: Serialize + Default {
+    fn to_row(&self) -> Vec<String> {
+        let (_, values) = struct_to_vec(&self);
+        values
+    }
+
+    fn get_columns() -> Vec<String> {
+        let (keys, _) = struct_to_vec(&Self::default());
+        keys
+    }
+}
+
+// From ChatGPT!!
+fn struct_to_vec<T: Serialize>(object: &T) -> (Vec<String>, Vec<String>) {
+    let value = serde_json::to_value(object).expect("Serialization failed");
+    if let Value::Object(map) = value {
+        let keys = map.keys().cloned().collect::<Vec<_>>();
+        // let values = map.values().map(|v| v.to_string()).collect::<Vec<_>>();
+        let values = map
+            .values()
+            .map(|v| match v {
+                Value::Number(num) => {
+                    if num.is_f64() {
+                        // Format floating-point numbers to 2 decimal places
+                        format!("{:.2}", num.as_f64().unwrap())
+                    } else {
+                        // Keep integers as they are
+                        num.to_string()
+                    }
+                }
+                _ => v.to_string(), // Handle other types
+            })
+            .collect::<Vec<_>>();
+        (keys, values)
+    } else {
+        panic!("Expected a flat struct, got something else!");
     }
 }
 

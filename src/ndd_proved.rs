@@ -6,9 +6,8 @@ use rand::prelude::*;
 use rand::rngs::StdRng;
 use rand_seeder::Seeder;
 use serde::Serialize;
-use serde_json::Value;
 
-use crate::metrics::{CsvMetric, MetricRegistry};
+use crate::metrics::{CsvMetric, CsvMetricStruct, MetricRegistry};
 use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
@@ -112,14 +111,14 @@ pub struct NDDProved {
     // -------------------------------------------------------------------------
     // PARAMETERS
     // Design parameters (derived from objectives)
-    p_cruise_quanta: Time,
-    p_cruise_quanta_count: u64,   // T in units of quanta.
-    p_cwnd_averaging_factor: f64, // alpha
-    p_cwnd_clamp_high: f64,       // delta1
-    p_cwnd_clamp_low: f64,        // delta2
-    p_probe_multiplier: f64,      // gamma1
-    // p_gamma2: f64,             // gamma1 * (T+D)/T
-    // p_gamma3: f64,             // gamma1 * (T-D)/T
+    p_cruise_measurement_duration: Time,
+    p_cruise_measurement_duration_multiplier: u64, // T in units of jitter.
+    p_cwnd_averaging_factor: f64,                  // alpha
+    p_cwnd_clamp_high: f64,                        // delta1
+    p_cwnd_clamp_low: f64,                         // delta2
+    p_probe_multiplier: f64,                       // gamma1
+    // p_gamma2: f64,                              // gamma1 * (T+D)/T
+    // p_gamma3: f64,                              // gamma1 * (T-D)/T
     p_probe_duration: Time, // This can really be anything
     p_contract_min_delay: Time,
     p_slot_load_factor: u64,
@@ -127,7 +126,7 @@ pub struct NDDProved {
 
     // Prior belief of network parameters
     p_max_flow_count: u64,
-    p_jitter_tolerance: Time, // D in seconds
+    p_jitter_tolerance: Time, // D
     p_max_rtprop: Time,
     p_min_cwnd: f64, // packets
     p_min_intersend_time: Time,
@@ -156,8 +155,9 @@ pub struct NDDProved {
     // s_queueing_delay_records: Vec<DelayRecord>,
 
     // Cruise state
-    s_cruise_rate_this_round: Option<f64>, // packets per second
+    s_max_cruise_rate_this_round: Option<f64>, // packets per second
     s_cruise_records: Vec<CruiseRecord>,
+    s_latest_ack_rate: f64,
 
     // Probe state
     s_probe_ongoing: bool,
@@ -176,8 +176,16 @@ impl Display for NDDProved {
         // output all the parameters
         writeln!(f, "NDDProved parameters:")?;
         writeln!(f, "p_rng_seed: {}", self.p_rng_seed)?;
-        writeln!(f, "p_cruise_quanta: {}", self.p_cruise_quanta)?;
-        writeln!(f, "p_cruise_quanta_count: {}", self.p_cruise_quanta_count)?;
+        writeln!(
+            f,
+            "p_cruise_measurement_duration: {}",
+            self.p_cruise_measurement_duration
+        )?;
+        writeln!(
+            f,
+            "p_cruise_measurement_duration_multiplier: {}",
+            self.p_cruise_measurement_duration_multiplier
+        )?;
         writeln!(
             f,
             "p_cwnd_averaging_factor: {}",
@@ -210,81 +218,31 @@ struct CwndUpdateMetric {
 
     communicated_flow_count: f64,
     bandwidth_estimate: Option<f64>,
+    cruise_rate: Option<f64>,
     flow_count_estimate: Option<f64>,
     target_cwnd: Option<f64>,
 
     cwnd_after_probe: f64,
 }
 
-impl CwndUpdateMetric {
-    fn to_row(&self) -> Vec<String> {
-        let (_, values) = struct_to_vec(&self);
-        values
-    }
+impl CsvMetricStruct for CwndUpdateMetric {}
 
-    fn get_columns() -> Vec<String> {
-        let (keys, _) = struct_to_vec(&Self::default());
-        keys
-    }
-}
-
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct SlotMetric {
     start_time: Time,
     end_time: Time,
     min_queueing_delay: Time,
     max_queueing_delay: Time,
     communicated_flow_count: f64,
-    cruise_rate: f64,
+    max_cruise_rate_this_round: f64,
+    latest_ack_rate: f64,
     cruise_happened: bool,
     probe_happened: bool,
     round_ended: bool,
     cwnd: f64,
 }
 
-impl SlotMetric {
-    fn to_row(&self) -> Vec<String> {
-        vec![
-            self.start_time.to_string(),
-            self.end_time.to_string(),
-            self.min_queueing_delay.to_string(),
-            self.max_queueing_delay.to_string(),
-            self.communicated_flow_count.to_string(),
-            self.cruise_rate.to_string(),
-            self.cruise_happened.to_string(),
-            self.probe_happened.to_string(),
-            self.round_ended.to_string(),
-            self.cwnd.to_string(),
-        ]
-    }
-
-    fn get_columns() -> Vec<String> {
-        vec![
-            "start_time".to_string(),
-            "end_time".to_string(),
-            "min_queueing_delay".to_string(),
-            "max_queueing_delay".to_string(),
-            "communicated_flow_count".to_string(),
-            "cruise_rate".to_string(),
-            "cruise_happened".to_string(),
-            "probe_happened".to_string(),
-            "round_ended".to_string(),
-            "cwnd".to_string(),
-        ]
-    }
-}
-
-// From ChatGPT!!
-fn struct_to_vec<T: Serialize>(object: &T) -> (Vec<String>, Vec<String>) {
-    let value = serde_json::to_value(object).expect("Serialization failed");
-    if let Value::Object(map) = value {
-        let keys = map.keys().cloned().collect::<Vec<_>>();
-        let values = map.values().map(|v| v.to_string()).collect::<Vec<_>>();
-        (keys, values)
-    } else {
-        panic!("Expected a flat struct, got something else!");
-    }
-}
+impl CsvMetricStruct for SlotMetric {}
 
 impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
@@ -358,10 +316,11 @@ impl CongestionControl for NDDProved {
 
     fn get_intersend_time(&mut self) -> Time {
         // TODO: is this the best rate value for cwnd?
-        std::cmp::max(
-            self.p_min_intersend_time,
-            Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
-        )
+        // std::cmp::max(
+        //     self.p_min_intersend_time,
+        //     Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
+        // )
+        self.p_min_intersend_time
     }
 
     fn on_timeout(&mut self) {
@@ -473,6 +432,7 @@ impl NDDProved {
                 probe_queueing_delay: self.s_probe_queueing_delay.unwrap(),
                 probe_excess_amount: self.s_probe_excess_amount,
                 bandwidth_estimate,
+                cruise_rate: self.s_max_cruise_rate_this_round,
                 flow_count_estimate,
                 communicated_flow_count: self.s_communicated_flow_count_this_round,
                 target_cwnd,
@@ -493,7 +453,8 @@ impl NDDProved {
             let excess_delay =
                 self.s_probe_queueing_delay.unwrap() - self.s_queueing_delay_before_probe;
             let bandwidth_estimate = (self.s_probe_excess_amount as f64) / excess_delay.secs(); // packets per second
-            let flow_count_estimate = bandwidth_estimate / self.s_cruise_rate_this_round.unwrap();
+            let flow_count_estimate =
+                bandwidth_estimate / self.s_max_cruise_rate_this_round.unwrap();
             let target_cwnd =
                 self.s_cwnd * flow_count_estimate / self.s_communicated_flow_count_this_round;
             next_cwnd = (1. - self.p_cwnd_averaging_factor) * prev_cwnd
@@ -535,7 +496,7 @@ impl NDDProved {
         self.s_probe_queueing_delay = None;
         let s_excess_amount = f64::ceil(
             self.p_probe_multiplier
-                * self.s_cruise_rate_this_round.unwrap()
+                * self.s_max_cruise_rate_this_round.unwrap()
                 * self.s_communicated_flow_count_this_round
                 * self.p_jitter_tolerance.secs(),
         );
@@ -566,15 +527,16 @@ impl NDDProved {
         let last_record: &mut CruiseRecord = self.s_cruise_records.last_mut().unwrap();
         last_record.probe_ongoing = last_record.probe_ongoing || self.s_probe_ongoing;
 
-        if self.cruise_quanta_elapsed(now) {
+        if self.cruise_measurement_elapsed(now) {
             self.fill_cruise_entry(now, ack);
             self.update_cruise_rate();
+            self.s_latest_ack_rate = self.s_cruise_records.last().unwrap().get_ack_rate();
             self.add_cruise_entry(now, ack);
         }
     }
 
-    fn cruise_quanta_elapsed(&self, now: Time) -> bool {
-        now >= self.s_cruise_records.last().unwrap().start_time + self.p_cruise_quanta
+    fn cruise_measurement_elapsed(&self, now: Time) -> bool {
+        now >= self.s_cruise_records.last().unwrap().start_time + self.p_cruise_measurement_duration
     }
 
     fn fill_cruise_entry(&mut self, now: Time, ack: SeqNum) {
@@ -602,11 +564,12 @@ impl NDDProved {
         let last_record = self.s_cruise_records.last().unwrap();
         let last_cruise_rate = last_record.get_ack_rate();
         if !last_record.probe_ongoing {
-            if self.s_cruise_rate_this_round.is_none() {
-                self.s_cruise_rate_this_round = Some(last_cruise_rate);
+            if self.s_max_cruise_rate_this_round.is_none() {
+                self.s_max_cruise_rate_this_round = Some(last_cruise_rate);
             } else {
-                if self.s_cruise_rate_this_round.unwrap() > last_cruise_rate {
-                    self.s_cruise_rate_this_round = Some(last_cruise_rate);
+                // max over all the cruise rate measurements
+                if self.s_max_cruise_rate_this_round.unwrap() < last_cruise_rate {
+                    self.s_max_cruise_rate_this_round = Some(last_cruise_rate);
                 }
             }
         }
@@ -641,8 +604,8 @@ impl NDDProved {
         // slot.
         let mut slot_duration =
             self.p_max_rtprop + self.p_probe_duration + self.s_slot_max_queueing_delay;
-        if slot_duration < self.p_cruise_quanta * self.p_cruise_quanta_count {
-            slot_duration = self.p_cruise_quanta * self.p_cruise_quanta_count;
+        if slot_duration < self.p_cruise_measurement_duration {
+            slot_duration = self.p_cruise_measurement_duration;
         }
 
         now >= self.s_slot_start_time + slot_duration
@@ -681,12 +644,12 @@ impl NDDProved {
         self.s_slots_till_now_in_this_round = 0; // count
         self.s_communicated_flow_count_this_round = self.p_max_flow_count as f64; // min
         self.s_cruise_records.clear();
-        self.s_cruise_rate_this_round = None; // min
+        self.s_max_cruise_rate_this_round = None; // min
 
         // self.s_queueing_delay_records.clear();  // min
 
         // ? Currently choosing to clear cruise records altogether. This will
-        // force one cruise quanta before probe. Should we instead keep some
+        // force one cruise measurement before probe. Should we instead keep some
         // cruise records from previous round?
 
         // let last_record = *self.s_cruise_records.last().unwrap();
@@ -707,7 +670,8 @@ impl NDDProved {
                 min_queueing_delay: self.s_slot_min_queueing_delay.unwrap(),
                 max_queueing_delay: self.s_slot_max_queueing_delay,
                 communicated_flow_count: self.s_communicated_flow_count_this_round,
-                cruise_rate: self.s_cruise_rate_this_round.unwrap(), // if slot ended then must have a cruise rate estimate.
+                max_cruise_rate_this_round: self.s_max_cruise_rate_this_round.unwrap(), // if slot ended then must have a cruise rate estimate.
+                latest_ack_rate: self.s_latest_ack_rate,
                 cruise_happened: cruise_ended,
                 probe_happened: probe_ended,
                 round_ended,
@@ -720,13 +684,8 @@ impl NDDProved {
 
 impl Default for NDDProved {
     fn default() -> Self {
-        // TODO: we want different rng per flow, so make this dynamic.
-
-        // TODO: Cruise quanta should be same as T, as that is the duration
-        // over which we want to measure cruise rate.
         let rng_seed = 42;
         let t_by_d = 4; // T/D, duration of cruise measurement relative to jitter.
-        let cruise_quanta_factor = 5;
         let jitter_belief = Time::from_millis(10);
         let max_rtprop = Time::from_millis(100);
         let slot_load_factor = 3;
@@ -741,8 +700,8 @@ impl Default for NDDProved {
             slot_metric: None,
             cwnd_update_metric: None,
 
-            p_cruise_quanta: Time::from_micros(jitter_belief.micros() / cruise_quanta_factor), // ? ceil vs floor
-            p_cruise_quanta_count: t_by_d * cruise_quanta_factor,
+            p_cruise_measurement_duration: jitter_belief * t_by_d,
+            p_cruise_measurement_duration_multiplier: t_by_d,
             p_cwnd_averaging_factor: 0.5,
             p_cwnd_clamp_high: 1.2,
             p_cwnd_clamp_low: 1.1,
@@ -775,9 +734,11 @@ impl Default for NDDProved {
 
             s_slots_till_now_in_this_round: 0,
             s_communicated_flow_count_this_round: max_flow_count as f64,
+
             // s_queueing_delay_records: Vec::new(),
-            s_cruise_rate_this_round: None,
+            s_max_cruise_rate_this_round: None,
             s_cruise_records: Vec::new(),
+            s_latest_ack_rate: 0.,
 
             s_probe_ongoing: false,
             s_initiated_probe_end: false,
