@@ -20,3 +20,4 @@ circular-buffer = "0.1.7"
 csv = "1.3.0"
 num = "0.4.3"
 indexmap = { version = "2.7.0", features = ["serde"] }
+rand_seeder = "0.3.0"

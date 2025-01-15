@@ -2,8 +2,9 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use rand::prelude::*;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand_seeder::Seeder;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -371,12 +372,11 @@ impl CongestionControl for NDDProved {
         if let Some(metrics_config_file) = metrics_config_file {
             self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
         }
-        let metric_name: &str = &(name.to_owned() + "slot");
         self.slot_metric = self
             .metric_registry
             .as_mut()
             .unwrap()
-            .register_csv_metric(metric_name, SlotMetric::get_columns());
+            .register_csv_metric(&(name.to_owned() + "slot"), SlotMetric::get_columns());
         self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
             &(name.to_owned() + "cwnd_update"),
             CwndUpdateMetric::get_columns(),
@@ -384,7 +384,10 @@ impl CongestionControl for NDDProved {
 
         self.reset_round_state();
         self.reset_probe_state();
-        self.rng = StdRng::seed_from_u64(self.p_rng_seed);
+        // self.rng = StdRng::seed_from_u64(self.p_rng_seed);
+        let unique_str = &(name.to_owned() + self.p_rng_seed.to_string().as_str());
+        let seed = Seeder::from(unique_str).make_seed::<[u8; 32]>();
+        self.rng = StdRng::from_seed(seed);
 
         println!("Initialized NDDProved {}", name);
         println!("{}", self);
