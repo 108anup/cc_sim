@@ -11,7 +11,7 @@ use std::fmt;
 use std::rc::Rc;
 
 /// Time in microseconds
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, Serialize, Deserialize, Default)]
 pub struct Time(u64);
 
 /// Unique packet ID

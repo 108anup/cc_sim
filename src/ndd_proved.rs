@@ -4,6 +4,8 @@ use std::rc::Rc;
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::metrics::{CsvMetric, MetricRegistry};
 use crate::rtt_window::RTTWindow;
@@ -104,6 +106,7 @@ pub struct NDDProved {
     // METRICS
     metric_registry: Option<MetricRegistry>,
     slot_metric: Option<Rc<RefCell<CsvMetric>>>,
+    cwnd_update_metric: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -143,7 +146,7 @@ pub struct NDDProved {
 
     // Collision slot state (Slot level)
     s_slot_start_time: Time,
-    s_slot_max_queueing_delay: Time, // Upper bound on E/C
+    s_slot_max_queueing_delay: Time,         // Upper bound on E/C
     s_slot_min_queueing_delay: Option<Time>, // For computing excess delay when probing.
 
     // State for N_R estimate (Round level)
@@ -195,6 +198,36 @@ impl Display for NDDProved {
     }
 }
 
+// TODO: write derive macro to convert struct to csv row.
+#[derive(Serialize, Default)]
+struct CwndUpdateMetric {
+    now: Time,
+    cwnd_before_probe: f64,
+    queueing_delay_before_probe: Time,
+    probe_queueing_delay: Time,
+    probe_excess_amount: u64,
+
+    communicated_flow_count: f64,
+    bandwidth_estimate: Option<f64>,
+    flow_count_estimate: Option<f64>,
+    target_cwnd: Option<f64>,
+
+    cwnd_after_probe: f64,
+}
+
+impl CwndUpdateMetric {
+    fn to_row(&self) -> Vec<String> {
+        let (_, values) = struct_to_vec(&self);
+        values
+    }
+
+    fn get_columns() -> Vec<String> {
+        let (keys, _) = struct_to_vec(&Self::default());
+        keys
+    }
+}
+
+#[derive(Serialize)]
 struct SlotMetric {
     start_time: Time,
     end_time: Time,
@@ -240,6 +273,18 @@ impl SlotMetric {
     }
 }
 
+// From ChatGPT!!
+fn struct_to_vec<T: Serialize>(object: &T) -> (Vec<String>, Vec<String>) {
+    let value = serde_json::to_value(object).expect("Serialization failed");
+    if let Value::Object(map) = value {
+        let keys = map.keys().cloned().collect::<Vec<_>>();
+        let values = map.values().map(|v| v.to_string()).collect::<Vec<_>>();
+        (keys, values)
+    } else {
+        panic!("Expected a flat struct, got something else!");
+    }
+}
+
 impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
@@ -267,7 +312,7 @@ impl CongestionControl for NDDProved {
             }
             if self.s_initiated_probe_end && self.should_end_probe(cum_ack) {
                 self.end_probe();
-                self.update_cwnd_after_probe();
+                self.update_cwnd_after_probe(now);
                 probe_ended = true;
             }
         } else {
@@ -332,6 +377,10 @@ impl CongestionControl for NDDProved {
             .as_mut()
             .unwrap()
             .register_csv_metric(metric_name, SlotMetric::get_columns());
+        self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(name.to_owned() + "cwnd_update"),
+            CwndUpdateMetric::get_columns(),
+        );
 
         self.reset_round_state();
         self.reset_probe_state();
@@ -381,14 +430,18 @@ impl NDDProved {
         if self.is_ack_part_of_excess_duration(_ack) {
             // update excess delay
             let delay = rtt - self.s_min_rtt;
-            if self.s_probe_queueing_delay.is_none() || delay < self.s_probe_queueing_delay.unwrap() {
+            if self.s_probe_queueing_delay.is_none() || delay < self.s_probe_queueing_delay.unwrap()
+            {
                 self.s_probe_queueing_delay = Some(delay);
             }
         }
     }
 
     fn initiate_probe_end(&mut self) {
-        self.s_last_seq_of_probe = Some(std::cmp::max(self.s_first_seq_of_probe.unwrap(), self.s_tot_tx));
+        self.s_last_seq_of_probe = Some(std::cmp::max(
+            self.s_first_seq_of_probe.unwrap(),
+            self.s_tot_tx,
+        ));
         // The max ensures that even if probe duration is very small (if probe
         // rate too low), the probe contains at least 1 pkt which experiences
         // full delay.
@@ -400,19 +453,54 @@ impl NDDProved {
         self.s_probe_ongoing = false;
     }
 
-    fn update_cwnd_after_probe(&mut self) {
+    fn log_cwnd_update(
+        &self,
+        now: Time,
+        cwnd_before_probe: f64,
+        bandwidth_estimate: Option<f64>,
+        flow_count_estimate: Option<f64>,
+        target_cwnd: Option<f64>,
+        cwnd_after_probe: f64,
+    ) {
+        self.cwnd_update_metric.as_ref().unwrap().borrow_mut().log(
+            CwndUpdateMetric {
+                now,
+                cwnd_before_probe,
+                queueing_delay_before_probe: self.s_queueing_delay_before_probe,
+                probe_queueing_delay: self.s_probe_queueing_delay.unwrap(),
+                probe_excess_amount: self.s_probe_excess_amount,
+                bandwidth_estimate,
+                flow_count_estimate,
+                communicated_flow_count: self.s_communicated_flow_count_this_round,
+                target_cwnd,
+                cwnd_after_probe,
+            }
+            .to_row(),
+        );
+    }
+
+    fn update_cwnd_after_probe(&mut self, now: Time) {
         let prev_cwnd = self.s_cwnd;
         let mut next_cwnd = self.p_cwnd_clamp_high * prev_cwnd;
+        let mut log_bandwidth_estimate = None;
+        let mut log_flow_count_estimate = None;
+        let mut log_target_cwnd = None;
+
         if self.s_queueing_delay_before_probe < self.s_probe_queueing_delay.unwrap() {
-            let excess_delay = self.s_probe_queueing_delay.unwrap() - self.s_queueing_delay_before_probe;
-            let bandwidth_estimate =
-                (self.s_probe_excess_amount as f64) / excess_delay.secs(); // packets per second
+            let excess_delay =
+                self.s_probe_queueing_delay.unwrap() - self.s_queueing_delay_before_probe;
+            let bandwidth_estimate = (self.s_probe_excess_amount as f64) / excess_delay.secs(); // packets per second
             let flow_count_estimate = bandwidth_estimate / self.s_cruise_rate_this_round.unwrap();
             let target_cwnd =
                 self.s_cwnd * flow_count_estimate / self.s_communicated_flow_count_this_round;
             next_cwnd = (1. - self.p_cwnd_averaging_factor) * prev_cwnd
                 + self.p_cwnd_averaging_factor * target_cwnd;
+
+            log_bandwidth_estimate = Some(bandwidth_estimate);
+            log_flow_count_estimate = Some(flow_count_estimate);
+            log_target_cwnd = Some(target_cwnd);
         }
+
         if next_cwnd > self.p_cwnd_clamp_high * prev_cwnd {
             next_cwnd = self.p_cwnd_clamp_high * prev_cwnd;
         }
@@ -422,6 +510,15 @@ impl NDDProved {
         if next_cwnd < self.p_min_cwnd {
             next_cwnd = self.p_min_cwnd;
         }
+
+        self.log_cwnd_update(
+            now,
+            prev_cwnd,
+            log_bandwidth_estimate,
+            log_flow_count_estimate,
+            log_target_cwnd,
+            next_cwnd,
+        );
         self.s_cwnd = f64::ceil(next_cwnd);
     }
 
@@ -550,9 +647,12 @@ impl NDDProved {
 
     fn update_slot_state(&mut self, _now: Time, rtt: Time) {
         let queueing_delay = rtt - self.s_min_rtt;
-        self.s_slot_max_queueing_delay = std::cmp::max(self.s_slot_max_queueing_delay, queueing_delay);
+        self.s_slot_max_queueing_delay =
+            std::cmp::max(self.s_slot_max_queueing_delay, queueing_delay);
 
-        if self.s_slot_min_queueing_delay.is_none() || (self.s_slot_min_queueing_delay.unwrap() > queueing_delay) {
+        if self.s_slot_min_queueing_delay.is_none()
+            || (self.s_slot_min_queueing_delay.unwrap() > queueing_delay)
+        {
             self.s_slot_min_queueing_delay = Some(queueing_delay);
         }
     }
@@ -636,6 +736,7 @@ impl Default for NDDProved {
 
             metric_registry: None,
             slot_metric: None,
+            cwnd_update_metric: None,
 
             p_cruise_quanta: Time::from_micros(jitter_belief.micros() / cruise_quanta_factor), // ? ceil vs floor
             p_cruise_quanta_count: t_by_d * cruise_quanta_factor,
