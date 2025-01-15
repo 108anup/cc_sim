@@ -45,6 +45,7 @@ fn float_min<T: Float>(current: T, sample: T) -> T {
     }
 }
 
+#[derive(Serialize, Default)]
 struct CruiseRecord {
     start_time: Time,
     start_tot_tx: u64,
@@ -57,6 +58,10 @@ struct CruiseRecord {
     end_tot_rx: Option<u64>,
     end_tot_ld: Option<u64>,
     end_seq: Option<SeqNum>,
+
+    duration: Option<Time>,
+    acked: Option<u64>,
+    ack_rate: Option<f64>,
 
     probe_ongoing: bool,
 }
@@ -81,6 +86,9 @@ impl CruiseRecord {
             end_tot_rx: None,
             end_tot_ld: None,
             end_seq: None,
+            duration: None,
+            acked: None,
+            ack_rate: None,
             probe_ongoing,
         }
     }
@@ -93,22 +101,19 @@ impl CruiseRecord {
         end_tot_ld: u64,
         end_seq: SeqNum,
     ) {
+        assert!(end_time > self.start_time);
         self.end_time = Some(end_time);
         self.end_tot_tx = Some(end_tot_tx);
         self.end_tot_rx = Some(end_tot_rx);
         self.end_tot_ld = Some(end_tot_ld);
         self.end_seq = Some(end_seq);
-    }
-
-    fn get_ack_rate(&self) -> f64 {
-        // packets per second
-        let duration = self.end_time.unwrap() - self.start_time;
-        let packets = self.end_tot_rx.unwrap() as i64 - self.start_tot_rx as i64;
-        assert!(duration.micros() > 0);
-        assert!(packets >= 0);
-        packets as f64 / duration.secs()
+        self.duration = Some(end_time - self.start_time);
+        self.acked = Some(end_tot_rx - self.start_tot_rx);
+        self.ack_rate = Some(self.acked.unwrap() as f64 / self.duration.unwrap().secs());
     }
 }
+
+impl CsvMetricStruct for CruiseRecord {}
 
 struct QdelRecord {
     time: Time,
@@ -116,6 +121,7 @@ struct QdelRecord {
 }
 
 pub struct NDDProved {
+    name: String,
     rng: StdRng,
     p_rng_seed: u64,
 
@@ -124,6 +130,7 @@ pub struct NDDProved {
     metric_registry: Option<MetricRegistry>,
     slot_metric: Option<Rc<RefCell<CsvMetric>>>,
     cwnd_update_metric: Option<Rc<RefCell<CsvMetric>>>,
+    cruise_metric: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -174,7 +181,7 @@ pub struct NDDProved {
     // Cruise state (get record/sample every T time (independent of slot time)
     s_round_max_cruise_rate: f64, // packets per second
     s_round_cruise_records: Vec<CruiseRecord>,
-    s_latest_cruise_rate: f64,  // packets per second
+    s_latest_cruise_rate: f64, // packets per second
 
     // Probe state (for the slot in which we probe, the probe may be smaller
     // than the slot duration)
@@ -303,6 +310,9 @@ impl CongestionControl for NDDProved {
 
         if cruise_ended || probe_ended {
             // slot ended
+
+            // TODO: we can follow convention that round ends after probe so
+            // that we maximize information gathering?
             let round_ended = self.round_ended();
             self.log_slot_metric(now, cruise_ended, probe_ended, round_ended);
 
@@ -336,11 +346,20 @@ impl CongestionControl for NDDProved {
 
     fn get_intersend_time(&mut self) -> Time {
         // TODO: is this the best rate value for cwnd?
-        // std::cmp::max(
-        //     self.p_min_intersend_time,
-        //     Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
-        // )
-        self.p_lb_intersend_time
+
+        // If we pace during probe, then do we do not get correct bandwidth
+        // estimate. If we do not pace during cruise, then we create
+        // self-induced jitter.
+
+        if self.s_probe_ongoing {
+            self.p_lb_intersend_time
+        }
+        else {
+            std::cmp::max(
+                self.p_lb_intersend_time,
+                Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
+            )
+        }
     }
 
     fn on_timeout(&mut self) {
@@ -348,6 +367,7 @@ impl CongestionControl for NDDProved {
     }
 
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
+        self.name = name.to_string();
         if let Some(metrics_config_file) = metrics_config_file {
             self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
         }
@@ -359,6 +379,10 @@ impl CongestionControl for NDDProved {
         self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
             &(name.to_owned() + "cwnd_update"),
             CwndUpdateMetric::get_columns(),
+        );
+        self.cruise_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(name.to_owned() + "cruise"),
+            CruiseRecord::get_columns(),
         );
 
         self.reset_round_state();
@@ -548,13 +572,15 @@ impl NDDProved {
 
         if self.cruise_measurement_elapsed(now) {
             self.fill_cruise_entry(now, ack);
+            self.log_filled_cruise_entry();
             self.update_cruise_rate();
             self.add_cruise_entry(now, ack);
         }
     }
 
     fn cruise_measurement_elapsed(&self, now: Time) -> bool {
-        now >= self.s_round_cruise_records.last().unwrap().start_time + self.p_cruise_measurement_duration
+        now >= self.s_round_cruise_records.last().unwrap().start_time
+            + self.p_cruise_measurement_duration
     }
 
     fn fill_cruise_entry(&mut self, now: Time, ack: SeqNum) {
@@ -565,6 +591,11 @@ impl NDDProved {
             self.s_tot_ld,
             ack,
         );
+    }
+
+    fn log_filled_cruise_entry(&self) {
+        let last_record = self.s_round_cruise_records.last().unwrap();
+        self.cruise_metric.as_ref().unwrap().borrow_mut().log(last_record.to_row());
     }
 
     fn add_cruise_entry(&mut self, now: Time, ack: SeqNum) {
@@ -580,7 +611,7 @@ impl NDDProved {
 
     fn update_cruise_rate(&mut self) {
         let last_record = self.s_round_cruise_records.last().unwrap();
-        self.s_latest_cruise_rate = last_record.get_ack_rate();
+        self.s_latest_cruise_rate = last_record.ack_rate.unwrap();
         if !last_record.probe_ongoing {
             self.s_round_max_cruise_rate =
                 float_max(self.s_round_max_cruise_rate, self.s_latest_cruise_rate);
@@ -597,12 +628,10 @@ impl NDDProved {
         // });
 
         // min delay over the round (not just slot)
-        let this_flow_count =
-            (qdel.micros() as f64) / (self.p_contract_min_delay.micros() as f64);
+        let this_flow_count = (qdel.micros() as f64) / (self.p_contract_min_delay.micros() as f64);
         self.s_round_communicated_flow_count =
             float_min(self.s_round_communicated_flow_count, this_flow_count);
-        self.s_round_communicated_flow_count =
-            float_max(self.s_round_communicated_flow_count, 1.);
+        self.s_round_communicated_flow_count = float_max(self.s_round_communicated_flow_count, 1.);
         self.s_round_communicated_flow_count = float_min(
             self.s_round_communicated_flow_count,
             self.p_ub_flow_count as f64,
@@ -615,8 +644,7 @@ impl NDDProved {
         // ? We want queueing delay measurement, so that all flows have roughly
         // similar slot sizes. Currently taken min queueing delay of latest
         // slot.
-        let mut slot_duration =
-            self.p_ub_rtprop + self.p_probe_duration + self.s_slot_max_qdel;
+        let mut slot_duration = self.p_ub_rtprop + self.p_probe_duration + self.s_slot_max_qdel;
         slot_duration = std::cmp::max(slot_duration, self.p_cruise_measurement_duration);
 
         now >= self.s_slot_start_time + slot_duration
@@ -624,17 +652,12 @@ impl NDDProved {
 
     fn update_slot_state(&mut self, _now: Time, rtt: Time) {
         let queueing_delay = rtt - self.s_min_rtt;
-        self.s_slot_max_qdel =
-            std::cmp::max(self.s_slot_max_qdel, queueing_delay);
+        self.s_slot_max_qdel = std::cmp::max(self.s_slot_max_qdel, queueing_delay);
 
-        if self.s_slot_min_qdel.is_none()
-        {
+        if self.s_slot_min_qdel.is_none() {
             self.s_slot_min_qdel = Some(queueing_delay);
         }
-        self.s_slot_min_qdel = Some(std::cmp::min(
-            self.s_slot_min_qdel.unwrap(),
-            queueing_delay,
-        ));
+        self.s_slot_min_qdel = Some(std::cmp::min(self.s_slot_min_qdel.unwrap(), queueing_delay));
     }
 
     fn start_new_slot(&mut self, now: Time, rtt: Time) {
@@ -646,8 +669,7 @@ impl NDDProved {
     }
 
     fn round_ended(&self) -> bool {
-        self.s_round_slots_till_now
-            >= self.p_ub_flow_count * self.p_slot_load_factor as u64
+        self.s_round_slots_till_now >= self.p_ub_flow_count * self.p_slot_load_factor as u64
     }
 
     fn reset_round_state(&mut self) {
@@ -684,7 +706,7 @@ impl NDDProved {
                 min_qdel: self.s_slot_min_qdel.unwrap(),
                 max_qdel: self.s_slot_max_qdel,
                 communicated_flow_count: self.s_round_communicated_flow_count,
-                round_max_cruise_rate: self.s_round_max_cruise_rate, // if slot ended then must have a cruise rate estimate.
+                round_max_cruise_rate: self.s_round_max_cruise_rate,
                 latest_cruise_rate: self.s_latest_cruise_rate,
                 cruise_happened: cruise_ended,
                 probe_happened: probe_ended,
@@ -707,12 +729,14 @@ impl Default for NDDProved {
         let min_cwnd = 2.; // packets
 
         NDDProved {
+            name: "".to_string(),
             rng: StdRng::seed_from_u64(rng_seed),
             p_rng_seed: rng_seed,
 
             metric_registry: None,
             slot_metric: None,
             cwnd_update_metric: None,
+            cruise_metric: None,
 
             p_cruise_measurement_duration: jitter_belief * t_by_d,
             p_cruise_measurement_duration_multiplier: t_by_d,
@@ -749,7 +773,7 @@ impl Default for NDDProved {
             s_round_slots_till_now: 0,
             s_round_communicated_flow_count: max_flow_count as f64,
 
-            // s_queueing_delay_records: Vec::new(),
+            // s_qdel_records: Vec::new(),
             s_round_max_cruise_rate: 0.,
             s_round_cruise_records: Vec::new(),
             s_latest_cruise_rate: 0.,
