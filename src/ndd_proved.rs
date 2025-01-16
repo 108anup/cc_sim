@@ -258,6 +258,7 @@ impl CsvMetricStruct for CwndUpdateMetric {}
 struct SlotMetric {
     start_time: Time,
     end_time: Time,
+    duration: Time,
     min_qdel: Time,
     max_qdel: Time,
     communicated_flow_count: f64,
@@ -502,7 +503,9 @@ impl NDDProved {
             probe_excess_qdel =
                 self.s_probe_min_qdel_during.unwrap() - self.s_probe_min_qdel_before;
             let bandwidth_estimate = (self.s_probe_excess_amount as f64) / probe_excess_qdel.secs(); // packets per second
-            let flow_count_estimate = bandwidth_estimate / self.s_round_max_cruise_rate;
+            let mut flow_count_estimate = bandwidth_estimate / self.s_round_max_cruise_rate;
+            flow_count_estimate = float_max(flow_count_estimate, 1.);
+            flow_count_estimate = float_min(flow_count_estimate, self.p_ub_flow_count as f64);
             let target_cwnd =
                 self.s_cwnd * flow_count_estimate / self.s_round_communicated_flow_count;
             next_cwnd = (1. - self.p_cwnd_averaging_factor) * prev_cwnd
@@ -703,6 +706,7 @@ impl NDDProved {
             SlotMetric {
                 start_time: self.s_slot_start_time,
                 end_time: now,
+                duration: now - self.s_slot_start_time,
                 min_qdel: self.s_slot_min_qdel.unwrap(),
                 max_qdel: self.s_slot_max_qdel,
                 communicated_flow_count: self.s_round_communicated_flow_count,
