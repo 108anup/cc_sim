@@ -157,6 +157,7 @@ pub struct NDDProved {
 
     // -------------------------------------------------------------------------
     // STATE
+    s_latest_rtt: Time,
     s_srtt: RTTWindow,
     s_min_rtt: Time,
     s_cwnd: f64, // packets
@@ -187,11 +188,12 @@ pub struct NDDProved {
     // than the slot duration)
     s_probe_ongoing: bool,
     s_probe_initiated_end: bool,
-    s_probe_start_time: Time,
+    s_probe_start_time: Option<Time>,
     s_probe_cwnd_before: f64,
     s_probe_min_qdel_before: Time,
     s_probe_first_seq: Option<u64>,
     s_probe_last_seq: Option<u64>,
+    s_probe_drain_last_seq: Option<u64>,
     s_probe_min_qdel_during: Option<Time>,
     s_probe_excess_amount: u64, // packets
 }
@@ -276,6 +278,7 @@ impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
         self.s_tot_ld += num_lost;
+        self.s_latest_rtt = rtt;
 
         self.s_srtt.new_rtt_sample(rtt, now);
         self.s_min_rtt = std::cmp::min(self.s_min_rtt, rtt);
@@ -335,8 +338,12 @@ impl CongestionControl for NDDProved {
         }
     }
 
-    fn on_send(&mut self, _now: Time, _seq_num: SeqNum, _uid: PktId) {
+    fn on_send(&mut self, now: Time, _seq_num: SeqNum, _uid: PktId) {
         self.s_tot_tx += 1;
+
+        if self.s_probe_ongoing && self.s_probe_start_time.is_none() && self.s_tot_tx >= self.s_probe_first_seq.unwrap() {
+            self.s_probe_start_time = Some(now);
+        }
     }
 
     fn get_cwnd(&mut self) -> u64 {
@@ -352,15 +359,19 @@ impl CongestionControl for NDDProved {
         // estimate. If we do not pace during cruise, then we create
         // self-induced jitter.
 
-        if self.s_probe_ongoing {
-            self.p_lb_intersend_time
-        }
-        else {
-            std::cmp::max(
-                self.p_lb_intersend_time,
-                Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
-            )
-        }
+        // if self.s_probe_ongoing {
+        //     self.p_lb_intersend_time
+        // }
+        // else {
+        //     std::cmp::max(
+        //         self.p_lb_intersend_time,
+        //         Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
+        //     )
+        // }
+        std::cmp::max(
+            self.p_lb_intersend_time,
+            Time::from_micros((2e6 * self.s_latest_rtt.secs() / self.s_cwnd) as u64),
+        )
     }
 
     fn on_timeout(&mut self) {
@@ -406,13 +417,19 @@ impl CongestionControl for NDDProved {
 
 impl NDDProved {
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
-        now - self.s_probe_start_time >= self.p_probe_duration
+        if self.s_probe_start_time.is_none() {
+            false
+        }
+        else {
+            now - self.s_probe_start_time.unwrap() >= self.p_probe_duration
+        }
     }
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
         // TODO: is it really true that this is the last packet with any excess
         // delay. After cwnd drop, delay should decrease linearly right?
-        self.s_tot_rx + self.s_tot_ld >= self.s_probe_last_seq.unwrap() + 1
+        // self.s_tot_rx + self.s_tot_ld >= self.s_probe_last_seq.unwrap() + 1
+        self.s_tot_rx + self.s_tot_ld >= self.s_probe_drain_last_seq.unwrap() + 1
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
@@ -455,6 +472,7 @@ impl NDDProved {
         // full delay.
         self.s_cwnd = self.s_probe_cwnd_before;
         self.s_probe_initiated_end = true;
+        self.s_probe_drain_last_seq = Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
     }
 
     fn end_probe(&mut self) {
@@ -536,7 +554,7 @@ impl NDDProved {
         self.reset_probe_state();
         self.s_probe_ongoing = true;
         self.s_probe_initiated_end = false;
-        self.s_probe_start_time = now; // TODO: should this be now or the time we have transmitted the first seq of probe?
+        self.s_probe_start_time = None; // TODO: should this be now or the time we have transmitted the first seq of probe? I think first seq of probe being sent.
         self.s_probe_cwnd_before = self.s_cwnd;
         self.s_probe_min_qdel_before = self.s_slot_min_qdel.unwrap();
         self.s_probe_min_qdel_during = None;
@@ -548,19 +566,24 @@ impl NDDProved {
         );
         assert!(s_excess_amount > 0.);
         self.s_probe_excess_amount = s_excess_amount as u64;
-        self.s_probe_first_seq = Some(self.s_tot_tx + self.s_probe_excess_amount); // TODO: should we add 1 to this. I don't think so.
-        self.s_probe_last_seq = None;
         self.s_cwnd = self.s_probe_cwnd_before + (self.s_probe_excess_amount as f64);
+        self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
+        // TODO: should we add 1 to this. I don't think so.
+        // TODO: Double check probing sequences so that we can be sure of excess delay.
+        // Also double check the slot duration based on the sequence change.
+        self.s_probe_last_seq = None;
+        self.s_probe_drain_last_seq = None;
     }
 
     fn reset_probe_state(&mut self) {
         self.s_probe_ongoing = false;
         self.s_probe_initiated_end = false;
-        self.s_probe_start_time = Time::from_micros(0);
+        self.s_probe_start_time = None;
         self.s_probe_cwnd_before = self.p_lb_cwnd;
         self.s_probe_min_qdel_before = Time::from_millis(0);
         self.s_probe_first_seq = None;
         self.s_probe_last_seq = None;
+        self.s_probe_drain_last_seq = None;
         self.s_probe_min_qdel_during = None;
         self.s_probe_excess_amount = 0;
     }
@@ -647,7 +670,9 @@ impl NDDProved {
         // ? We want queueing delay measurement, so that all flows have roughly
         // similar slot sizes. Currently taken min queueing delay of latest
         // slot.
-        let mut slot_duration = self.p_ub_rtprop + self.p_probe_duration + self.s_slot_max_qdel;
+        let mut slot_duration = self.p_probe_duration + self.p_ub_rtprop * 3 + self.s_slot_max_qdel * 3;
+        // ^^ Roughly 2 rtts + probe duration. max_rtprop + max_qdel is ub on
+        // rtt.
         slot_duration = std::cmp::max(slot_duration, self.p_cruise_measurement_duration);
 
         now >= self.s_slot_start_time + slot_duration
@@ -762,6 +787,7 @@ impl Default for NDDProved {
 
             // we only use this for srtt which is independent of hist_period,
             // so any value here is okay.
+            s_latest_rtt: Time::from_millis(0),
             s_srtt: RTTWindow::new(Time::from_secs(10)),
             s_min_rtt: max_rtprop,
             s_cwnd: min_cwnd,
@@ -784,11 +810,12 @@ impl Default for NDDProved {
 
             s_probe_ongoing: false,
             s_probe_initiated_end: false,
-            s_probe_start_time: Time::from_micros(0),
+            s_probe_start_time: None,
             s_probe_cwnd_before: min_cwnd,
             s_probe_min_qdel_before: Time::from_millis(0),
             s_probe_first_seq: None,
             s_probe_last_seq: None,
+            s_probe_drain_last_seq: None,
             s_probe_min_qdel_during: None,
             s_probe_excess_amount: 0,
         }
