@@ -115,6 +115,21 @@ impl CruiseRecord {
 
 impl CsvMetricStruct for CruiseRecord {}
 
+#[derive(Serialize, Default)]
+struct AckRecord {
+    time: Time,
+    tot_tx: u64,
+    tot_rx: u64,
+    tot_ld: u64,
+    cum_ack: SeqNum,
+    rtt: Time,
+    probe_ongoing: bool,
+    is_part_of_excess_duration: bool,
+    cwnd: f64,
+}
+
+impl CsvMetricStruct for AckRecord {}
+
 struct QdelRecord {
     time: Time,
     qdel: Time,
@@ -131,6 +146,7 @@ pub struct NDDProved {
     slot_metric: Option<Rc<RefCell<CsvMetric>>>,
     cwnd_update_metric: Option<Rc<RefCell<CsvMetric>>>,
     cruise_metric: Option<Rc<RefCell<CsvMetric>>>,
+    ack_metric: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -336,6 +352,8 @@ impl CongestionControl for NDDProved {
 
             self.start_new_slot(now, rtt);
         }
+
+        self.log_ack_metric(now, cum_ack, rtt);
     }
 
     fn on_send(&mut self, now: Time, _seq_num: SeqNum, _uid: PktId) {
@@ -370,7 +388,7 @@ impl CongestionControl for NDDProved {
         // }
         std::cmp::max(
             self.p_lb_intersend_time,
-            Time::from_micros((2e6 * self.s_latest_rtt.secs() / self.s_cwnd) as u64),
+            Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
         )
     }
 
@@ -396,6 +414,10 @@ impl CongestionControl for NDDProved {
             &(name.to_owned() + "cruise"),
             CruiseRecord::get_columns(),
         );
+        self.ack_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(name.to_owned() + "ack"),
+            AckRecord::get_columns(),
+        );
 
         self.reset_round_state();
         self.reset_probe_state();
@@ -416,6 +438,22 @@ impl CongestionControl for NDDProved {
 }
 
 impl NDDProved {
+    fn log_ack_metric(&self, now: Time, cum_ack: SeqNum, rtt: Time) {
+        self.ack_metric.as_ref().unwrap().borrow_mut().log(
+            AckRecord {
+                time: now,
+                tot_tx: self.s_tot_tx,
+                tot_rx: self.s_tot_rx,
+                tot_ld: self.s_tot_ld,
+                cum_ack,
+                rtt,
+                probe_ongoing: self.s_probe_ongoing,
+                is_part_of_excess_duration: self.s_probe_ongoing && self.is_ack_part_of_excess_duration(cum_ack),
+                cwnd: self.s_cwnd,
+            }.to_row()
+        );
+    }
+
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
         if self.s_probe_start_time.is_none() {
             false
@@ -482,17 +520,17 @@ impl NDDProved {
     fn log_cwnd_update(
         &self,
         now: Time,
-        cwnd_before_probe: f64,
+        probe_cwnd_before: f64,
         probe_excess_qdel: Time,
         bandwidth_estimate: Option<f64>,
         flow_count_estimate: Option<f64>,
         target_cwnd: Option<f64>,
-        cwnd_after_probe: f64,
+        probe_cwnd_after: f64,
     ) {
         self.cwnd_update_metric.as_ref().unwrap().borrow_mut().log(
             CwndUpdateMetric {
                 now,
-                probe_cwnd_before: cwnd_before_probe,
+                probe_cwnd_before,
                 probe_min_qdel_before: self.s_probe_min_qdel_before,
                 probe_min_qdel_during: self.s_probe_min_qdel_during.unwrap(),
                 probe_excess_amount: self.s_probe_excess_amount,
@@ -503,7 +541,7 @@ impl NDDProved {
                 flow_count_estimate,
                 communicated_flow_count: self.s_round_communicated_flow_count,
                 target_cwnd,
-                probe_cwnd_after: cwnd_after_probe,
+                probe_cwnd_after,
             }
             .to_row(),
         );
@@ -517,7 +555,7 @@ impl NDDProved {
         let mut log_target_cwnd = None;
         let mut probe_excess_qdel = Time::from_millis(0);
 
-        if self.s_probe_min_qdel_before < self.s_probe_min_qdel_during.unwrap() {
+        if self.s_probe_min_qdel_before < self.s_probe_min_qdel_during.unwrap() && self.s_round_communicated_flow_count > 0. {
             probe_excess_qdel =
                 self.s_probe_min_qdel_during.unwrap() - self.s_probe_min_qdel_before;
             let bandwidth_estimate = (self.s_probe_excess_amount as f64) / probe_excess_qdel.secs(); // packets per second
@@ -558,10 +596,11 @@ impl NDDProved {
         self.s_probe_cwnd_before = self.s_cwnd;
         self.s_probe_min_qdel_before = self.s_slot_min_qdel.unwrap();
         self.s_probe_min_qdel_during = None;
+        let round_communicated_flow_count = float_max(self.s_round_communicated_flow_count, 1.);
         let s_excess_amount = f64::ceil(
             self.p_probe_multiplier
                 * self.s_round_max_cruise_rate
-                * self.s_round_communicated_flow_count
+                * round_communicated_flow_count
                 * self.p_ub_jitter.secs(),
         );
         assert!(s_excess_amount > 0.);
@@ -657,11 +696,18 @@ impl NDDProved {
         let this_flow_count = (qdel.micros() as f64) / (self.p_contract_min_delay.micros() as f64);
         self.s_round_communicated_flow_count =
             float_min(self.s_round_communicated_flow_count, this_flow_count);
-        self.s_round_communicated_flow_count = float_max(self.s_round_communicated_flow_count, 1.);
-        self.s_round_communicated_flow_count = float_min(
-            self.s_round_communicated_flow_count,
-            self.p_ub_flow_count as f64,
-        );
+
+        // Clamps
+        // If we keep these then a single flow has no incentive to create delay,
+        // likewise, there is no incentive to reduce delay when flow count is
+        // 10.
+
+        // self.s_round_communicated_flow_count = float_max(self.s_round_communicated_flow_count, 1.);
+
+        // self.s_round_communicated_flow_count = float_min(
+        //     self.s_round_communicated_flow_count,
+        //     self.p_ub_flow_count as f64,
+        // );
     }
 
     fn slot_ended(&self, now: Time) -> bool {
@@ -766,6 +812,7 @@ impl Default for NDDProved {
             slot_metric: None,
             cwnd_update_metric: None,
             cruise_metric: None,
+            ack_metric: None,
 
             p_cruise_measurement_duration: jitter_belief * t_by_d,
             p_cruise_measurement_duration_multiplier: t_by_d,
