@@ -126,9 +126,24 @@ struct AckRecord {
     probe_ongoing: bool,
     is_part_of_excess_duration: bool,
     cwnd: f64,
+    inflight: u64,
 }
 
 impl CsvMetricStruct for AckRecord {}
+
+
+#[derive(Serialize, Default)]
+struct SendRecord {
+    time: Time,
+    tot_tx: u64,
+    tot_rx: u64,
+    tot_ld: u64,
+    probe_ongoing: bool,
+    cwnd: f64,
+    inflight: u64,
+}
+
+impl CsvMetricStruct for SendRecord {}
 
 struct QdelRecord {
     time: Time,
@@ -147,6 +162,7 @@ pub struct NDDProved {
     cwnd_update_metric: Option<Rc<RefCell<CsvMetric>>>,
     cruise_metric: Option<Rc<RefCell<CsvMetric>>>,
     ack_metric: Option<Rc<RefCell<CsvMetric>>>,
+    send_metric: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -362,6 +378,8 @@ impl CongestionControl for NDDProved {
         if self.s_probe_ongoing && self.s_probe_start_time.is_none() && self.s_tot_tx >= self.s_probe_first_seq.unwrap() {
             self.s_probe_start_time = Some(now);
         }
+
+        self.log_send_metric(now);
     }
 
     fn get_cwnd(&mut self) -> u64 {
@@ -398,27 +416,7 @@ impl CongestionControl for NDDProved {
 
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
         self.name = name.to_string();
-        if let Some(metrics_config_file) = metrics_config_file {
-            self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
-        }
-        self.slot_metric = self
-            .metric_registry
-            .as_mut()
-            .unwrap()
-            .register_csv_metric(&(name.to_owned() + "slot"), SlotMetric::get_columns());
-        self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
-            &(name.to_owned() + "cwnd_update"),
-            CwndUpdateMetric::get_columns(),
-        );
-        self.cruise_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
-            &(name.to_owned() + "cruise"),
-            CruiseRecord::get_columns(),
-        );
-        self.ack_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
-            &(name.to_owned() + "ack"),
-            AckRecord::get_columns(),
-        );
-
+        self.init_metrics(metrics_config_file);
         self.reset_round_state();
         self.reset_probe_state();
         // self.rng = StdRng::seed_from_u64(self.p_rng_seed);
@@ -438,6 +436,48 @@ impl CongestionControl for NDDProved {
 }
 
 impl NDDProved {
+
+    fn init_metrics(&mut self, metrics_config_file_: Option<String>) {
+        if let Some(metrics_config_file) = metrics_config_file_ {
+            self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
+        }
+        self.slot_metric = self
+            .metric_registry
+            .as_mut()
+            .unwrap()
+            .register_csv_metric(&(self.name.to_owned() + "slot"), SlotMetric::get_columns());
+        self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(self.name.to_owned() + "cwnd_update"),
+            CwndUpdateMetric::get_columns(),
+        );
+        self.cruise_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(self.name.to_owned() + "cruise"),
+            CruiseRecord::get_columns(),
+        );
+        self.ack_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(self.name.to_owned() + "ack"),
+            AckRecord::get_columns(),
+        );
+        self.send_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+            &(self.name.to_owned() + "send"),
+            SendRecord::get_columns(),
+        );
+    }
+
+    fn log_send_metric(&self, now: Time) {
+        self.send_metric.as_ref().unwrap().borrow_mut().log(
+            SendRecord {
+                time: now,
+                tot_tx: self.s_tot_tx,
+                tot_rx: self.s_tot_rx,
+                tot_ld: self.s_tot_ld,
+                probe_ongoing: self.s_probe_ongoing,
+                cwnd: self.s_cwnd,
+                inflight: self.s_tot_tx - self.s_tot_rx - self.s_tot_ld,
+            }.to_row()
+        )
+    }
+
     fn log_ack_metric(&self, now: Time, cum_ack: SeqNum, rtt: Time) {
         self.ack_metric.as_ref().unwrap().borrow_mut().log(
             AckRecord {
@@ -450,6 +490,7 @@ impl NDDProved {
                 probe_ongoing: self.s_probe_ongoing,
                 is_part_of_excess_duration: self.s_probe_ongoing && self.is_ack_part_of_excess_duration(cum_ack),
                 cwnd: self.s_cwnd,
+                inflight: self.s_tot_tx - self.s_tot_rx - self.s_tot_ld,
             }.to_row()
         );
     }
@@ -606,12 +647,28 @@ impl NDDProved {
         assert!(s_excess_amount > 0.);
         self.s_probe_excess_amount = s_excess_amount as u64;
         self.s_cwnd = self.s_probe_cwnd_before + (self.s_probe_excess_amount as f64);
-        self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
-        // TODO: should we add 1 to this. I don't think so.
-        // TODO: Double check probing sequences so that we can be sure of excess delay.
-        // Also double check the slot duration based on the sequence change.
         self.s_probe_last_seq = None;
         self.s_probe_drain_last_seq = None;
+
+        self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
+        // The first seq is our estimation of when the inflight would have
+        // increased to the new cwnd. If cwnd is doubled, and our pacing rate
+        // is twice cwnd/RTT, then that after sending a cwnd worth of packets
+        // we would have filled inflight as we effectively send 2 packets per
+        // ack. If cwnd is less than doubled then we would have increased
+        // inflight sooner than an RTT. Other flow will not know this (to set
+        // accurate slot size) so conservatively assuming that inflight only
+        // increases after cwnd sent, does not affect convergence time.
+
+        // Ideally we can set it based on measured inflight. This is good to
+        // verify at least, but our slot time will be in RTTs anyway.
+
+        // TODO: Is this really true? ^^ Maybe we can burst out packets if that
+        // does not affect self induced jitter.
+
+        // TODO: Double check probing sequences so that we can be sure of
+        // excess delay. Also double check the slot duration based on the
+        // sequence change.
     }
 
     fn reset_probe_state(&mut self) {
@@ -813,6 +870,7 @@ impl Default for NDDProved {
             cwnd_update_metric: None,
             cruise_metric: None,
             ack_metric: None,
+            send_metric: None,
 
             p_cruise_measurement_duration: jitter_belief * t_by_d,
             p_cruise_measurement_duration_multiplier: t_by_d,
