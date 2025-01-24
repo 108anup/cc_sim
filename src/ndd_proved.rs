@@ -404,10 +404,23 @@ impl CongestionControl for NDDProved {
         //         Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
         //     )
         // }
+
+        // All the following work. Pick any. With jitter, there may be burst of
+        // ACKs, so we should pace new transmissions.
+
+        // TODO: Ideally we can use min RTT in this slot.
+
+        // std::cmp::max(
+        //     self.p_lb_intersend_time,
+        //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+        // );
+
         std::cmp::max(
             self.p_lb_intersend_time,
-            Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            Time::from_micros((self.s_srtt.get_srtt().micros() as f64 / (self.s_cwnd * 2.)) as u64),
         )
+
+        // self.p_lb_intersend_time
     }
 
     fn on_timeout(&mut self) {
@@ -701,8 +714,14 @@ impl NDDProved {
     }
 
     fn cruise_measurement_elapsed(&self, now: Time) -> bool {
-        now >= self.s_round_cruise_records.last().unwrap().start_time
-            + self.p_cruise_measurement_duration
+        // now >= self.s_round_cruise_records.last().unwrap().start_time
+        //     + self.p_cruise_measurement_duration
+
+        let last_record = self.s_round_cruise_records.last().unwrap();
+        // RTT elapsed (the packet we sent after cruise start has been acked)
+        // NOTE: This ACK will cause a new packet to be txed, we wait for its
+        // ACK to arrive.
+        last_record.start_tot_tx + 1 <= self.s_tot_rx + self.s_tot_ld
     }
 
     fn fill_cruise_entry(&mut self, now: Time, ack: SeqNum) {
@@ -827,6 +846,10 @@ impl NDDProved {
 
     fn should_start_probe(&mut self) -> bool {
         self.rng.gen_bool(self.p_probe_probability)
+
+        // // Deterministic probes that do not collide
+        // let flow_id: u64 = self.name.parse().unwrap();
+        // self.s_round_slots_till_now == flow_id
     }
 
     fn log_slot_metric(&self, now: Time, cruise_ended: bool, probe_ended: bool, round_ended: bool) {
