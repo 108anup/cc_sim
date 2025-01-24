@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 fnv = "1.0"
 failure = "0.1"
-gnuplot = "0.0"
+gnuplot = "0.0.44"
 histogram = "0.6"
 priority-queue = "0.6"
 rand = "0.7.3"

@@ -435,9 +435,9 @@ impl<'a> Tracer<'a> {
 
                 ax.fill_between(
                     &times,
-                    &capacity,
                     &vec![0; times.len()],
-                    &[gnuplot::Caption("Capacity"), gnuplot::LineWidth(4.)],
+                    &capacity,
+                    &[gnuplot::Caption("Capacity"), gnuplot::FillAlpha(0.2)],
                 );
                 ax.lines(
                     &times,
