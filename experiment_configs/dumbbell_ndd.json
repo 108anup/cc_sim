@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 500000000,
+  "sim_dur": 3000000000,
   "log": {
     "out_terminal": "png",
     "out_file": "dumbbell_ndd.png",
@@ -16,7 +16,7 @@
       ]
     ],
     "stats_file": null,
-    "link_bucket_size": 100000
+    "link_bucket_size": 500000
   },
   "topo": {
     "link": {
@@ -25,7 +25,7 @@
     "bufsize": "Infinite",
     "sender_groups": [
       {
-        "num_senders": 2,
+        "num_senders": 5,
         "delay": 50000,
         "agg_intersend": {
           "Const": 0
