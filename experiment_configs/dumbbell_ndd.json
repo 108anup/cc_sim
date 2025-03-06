@@ -19,6 +19,7 @@
     "link_bucket_size": 500000
   },
   "topo": {
+    "topo_type": "Dumbbell",
     "link": {
       "Const": 1500000
     },

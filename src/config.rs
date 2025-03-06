@@ -68,9 +68,16 @@ pub struct SenderGroupConfig {
     pub tx_length: TcpSenderTxLength,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TopoType {
+    Dumbbell,
+    ParkingLot,
+}
+
 /// Configure the topology of the network
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConfigTopo {
+    pub topo_type: TopoType,
     /// How the common bottleneck link rate varies with time
     pub link: LinkTraceConfig,
     /// Buffer size of the bottleneck link

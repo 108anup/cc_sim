@@ -20,7 +20,7 @@ mod interval;
 // Internal dependencies.
 use base::BufferSize;
 use config::{
-    CCConfig, Config, ConfigLog, ConfigTopo, LinkTraceConfig, LogType, SenderGroupConfig,
+    CCConfig, Config, ConfigLog, ConfigTopo, LinkTraceConfig, LogType, SenderGroupConfig, TopoType,
 };
 use random::seed;
 use simulator::*;
@@ -83,6 +83,7 @@ fn main() -> Result<(), Error> {
             pkt_size: 1500,
             sim_dur: Some(Time::from_secs(100)),
             topo: ConfigTopo {
+                topo_type: TopoType::Dumbbell,
                 link: _p_link_trace,
                 bufsize: BufferSize::Finite(50000),
                 sender_groups,
