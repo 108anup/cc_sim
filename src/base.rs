@@ -263,6 +263,7 @@ impl<'a> NetObj for Link<'a> {
         self.tracer
             .log(obj_id, now, TraceElem::LinkIngress(pkt.src, pkt.size));
         if let BufferSize::Finite(size) = self.bufsize {
+            // TODO: trace losses, and compute queue size at each hop.
             if self.buffer.len() >= size {
                 return Ok(Vec::new());
             }

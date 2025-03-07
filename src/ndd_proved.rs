@@ -131,7 +131,6 @@ struct AckRecord {
 
 impl CsvMetricStruct for AckRecord {}
 
-
 #[derive(Serialize, Default)]
 struct SendRecord {
     time: Time,
@@ -375,7 +374,10 @@ impl CongestionControl for NDDProved {
     fn on_send(&mut self, now: Time, _seq_num: SeqNum, _uid: PktId) {
         self.s_tot_tx += 1;
 
-        if self.s_probe_ongoing && self.s_probe_start_time.is_none() && self.s_tot_tx >= self.s_probe_first_seq.unwrap() {
+        if self.s_probe_ongoing
+            && self.s_probe_start_time.is_none()
+            && self.s_tot_tx >= self.s_probe_first_seq.unwrap()
+        {
             self.s_probe_start_time = Some(now);
         }
 
@@ -449,7 +451,6 @@ impl CongestionControl for NDDProved {
 }
 
 impl NDDProved {
-
     fn init_metrics(&mut self, metrics_config_file_: Option<String>) {
         if let Some(metrics_config_file) = metrics_config_file_ {
             self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
@@ -467,14 +468,16 @@ impl NDDProved {
             &(self.name.to_owned() + "cruise"),
             CruiseRecord::get_columns(),
         );
-        self.ack_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
-            &(self.name.to_owned() + "ack"),
-            AckRecord::get_columns(),
-        );
-        self.send_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
-            &(self.name.to_owned() + "send"),
-            SendRecord::get_columns(),
-        );
+        self.ack_metric = self
+            .metric_registry
+            .as_mut()
+            .unwrap()
+            .register_csv_metric(&(self.name.to_owned() + "ack"), AckRecord::get_columns());
+        self.send_metric = self
+            .metric_registry
+            .as_mut()
+            .unwrap()
+            .register_csv_metric(&(self.name.to_owned() + "send"), SendRecord::get_columns());
     }
 
     fn log_send_metric(&self, now: Time) {
@@ -487,7 +490,8 @@ impl NDDProved {
                 probe_ongoing: self.s_probe_ongoing,
                 cwnd: self.s_cwnd,
                 inflight: self.s_tot_tx - self.s_tot_rx - self.s_tot_ld,
-            }.to_row()
+            }
+            .to_row(),
         )
     }
 
@@ -501,18 +505,19 @@ impl NDDProved {
                 cum_ack,
                 rtt,
                 probe_ongoing: self.s_probe_ongoing,
-                is_part_of_excess_duration: self.s_probe_ongoing && self.is_ack_part_of_excess_duration(cum_ack),
+                is_part_of_excess_duration: self.s_probe_ongoing
+                    && self.is_ack_part_of_excess_duration(cum_ack),
                 cwnd: self.s_cwnd,
                 inflight: self.s_tot_tx - self.s_tot_rx - self.s_tot_ld,
-            }.to_row()
+            }
+            .to_row(),
         );
     }
 
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
         if self.s_probe_start_time.is_none() {
             false
-        }
-        else {
+        } else {
             now - self.s_probe_start_time.unwrap() >= self.p_probe_duration
         }
     }
@@ -564,7 +569,8 @@ impl NDDProved {
         // full delay.
         self.s_cwnd = self.s_probe_cwnd_before;
         self.s_probe_initiated_end = true;
-        self.s_probe_drain_last_seq = Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
+        self.s_probe_drain_last_seq =
+            Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
     }
 
     fn end_probe(&mut self) {
@@ -609,7 +615,9 @@ impl NDDProved {
         let mut log_target_cwnd = None;
         let mut probe_excess_qdel = Time::from_millis(0);
 
-        if self.s_probe_min_qdel_before < self.s_probe_min_qdel_during.unwrap() && self.s_round_communicated_flow_count > 0. {
+        if self.s_probe_min_qdel_before < self.s_probe_min_qdel_during.unwrap()
+            && self.s_round_communicated_flow_count > 0.
+        {
             probe_excess_qdel =
                 self.s_probe_min_qdel_during.unwrap() - self.s_probe_min_qdel_before;
             let bandwidth_estimate = (self.s_probe_excess_amount as f64) / probe_excess_qdel.secs(); // packets per second
@@ -736,7 +744,11 @@ impl NDDProved {
 
     fn log_filled_cruise_entry(&self) {
         let last_record = self.s_round_cruise_records.last().unwrap();
-        self.cruise_metric.as_ref().unwrap().borrow_mut().log(last_record.to_row());
+        self.cruise_metric
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .log(last_record.to_row());
     }
 
     fn add_cruise_entry(&mut self, now: Time, ack: SeqNum) {
@@ -792,7 +804,8 @@ impl NDDProved {
         // ? We want queueing delay measurement, so that all flows have roughly
         // similar slot sizes. Currently taken min queueing delay of latest
         // slot.
-        let mut slot_duration = self.p_probe_duration + self.p_ub_rtprop * 3 + self.s_slot_max_qdel * 3;
+        let mut slot_duration =
+            self.p_probe_duration + self.p_ub_rtprop * 3 + self.s_slot_max_qdel * 3;
         // ^^ Roughly 2 rtts + probe duration. max_rtprop + max_qdel is ub on
         // rtt.
         slot_duration = std::cmp::max(slot_duration, self.p_cruise_measurement_duration);
