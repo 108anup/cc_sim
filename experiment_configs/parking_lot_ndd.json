@@ -1,6 +1,6 @@
 {
     "pkt_size": 1500,
-    "sim_dur": 3000000000,
+    "sim_dur": 1000000000,
     "log": {
         "out_terminal": "png",
         "out_file": "parking_lot_ndd.png",
@@ -27,7 +27,7 @@
         "sender_groups": [
             {
                 "num_senders": 5,
-                "delay": 50000,
+                "delay": 10000,
                 "agg_intersend": {
                     "Const": 0
                 },

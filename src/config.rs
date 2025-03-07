@@ -46,8 +46,8 @@ pub enum CCConfig {
     IncreaseBdpCC,
     Copa,
     Copa2,
-    NDD,
-    NDDSlow,
+    // NDD,
+    // NDDSlow,
     NDDProved,
 }
 

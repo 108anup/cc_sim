@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 3000000000,
+  "sim_dur": 300000000,
   "log": {
     "out_terminal": "png",
     "out_file": "dumbbell_ndd.png",
@@ -26,8 +26,8 @@
     "bufsize": "Infinite",
     "sender_groups": [
       {
-        "num_senders": 5,
-        "delay": 50000,
+        "num_senders": 2,
+        "delay": 10000,
         "agg_intersend": {
           "Const": 0
         },

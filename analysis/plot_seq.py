@@ -47,6 +47,18 @@ def plot_timeseries(args):
         sdf = sdf[sdf["time"] <= args.end]
 
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.02)
+    start_time = min(df["time"].min(), sdf["time"].min())
+
+    sdf["time"] = (sdf["time"] - start_time) / 1e3
+    df["time"] = (df["time"] - start_time) / 1e3
+    df["rtt"] = df["rtt"] / 1e3
+
+    start_cum_seq = df["tot_rx"].min()
+    df["tot_tx"] = df["tot_tx"] - start_cum_seq
+    df["tot_rx"] = df["tot_rx"] - start_cum_seq
+    sdf["tot_tx"] = sdf["tot_tx"] - start_cum_seq
+    sdf["tot_rx"] = sdf["tot_rx"] - start_cum_seq
+
 
     fig.add_trace(
         go.Scatter(
@@ -138,30 +150,30 @@ def plot_timeseries(args):
         row=3,
         col=1,
     )
-    fig.update_yaxes(title_text="RTT (us)", row=3, col=1)
-    fig.update_xaxes(title_text="Time (us)", row=3, col=1)
+    fig.update_yaxes(title_text="RTT (ms)", row=3, col=1)
+    fig.update_xaxes(title_text="Time (ms)", row=3, col=1)
 
-    rdf = infer_rtt(df, sdf)
-    fig.add_trace(
-        go.Scatter(
-            x=rdf["ack_time"],
-            y=rdf["rtt"],
-            mode="markers",
-            name="RTT (inferred ack)",
-        ),
-        row=3,
-        col=1,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=rdf["send_time"],
-            y=rdf["rtt"],
-            mode="markers",
-            name="RTT (inferred send)",
-        ),
-        row=3,
-        col=1,
-    )
+    # rdf = infer_rtt(df, sdf)
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=rdf["ack_time"],
+    #         y=rdf["rtt"],
+    #         mode="markers",
+    #         name="RTT (inferred ack)",
+    #     ),
+    #     row=3,
+    #     col=1,
+    # )
+    # fig.add_trace(
+    #     go.Scatter(
+    #         x=rdf["send_time"],
+    #         y=rdf["rtt"],
+    #         mode="markers",
+    #         name="RTT (inferred send)",
+    #     ),
+    #     row=3,
+    #     col=1,
+    # )
 
     oname = os.path.basename(ipath).replace(".csv", ".html")
     opath = os.path.join(dpath, oname)

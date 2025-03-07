@@ -15,7 +15,7 @@ mod metrics;
 mod ndd_proved;
 // mod ndd_time;
 // mod ndd_time_belief;
-mod interval;
+// mod interval;
 
 // Internal dependencies.
 use base::BufferSize;

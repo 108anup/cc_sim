@@ -5,9 +5,9 @@ use crate::config::TopoType;
 use crate::config::{CCConfig, Config};
 use crate::copa;
 use crate::copa2;
-use crate::ndd;
+// use crate::ndd;
 use crate::ndd_proved;
-use crate::ndd_slow;
+// use crate::ndd_slow;
 use crate::simulator::*;
 use crate::tracer::Tracer;
 use crate::transport::*;
@@ -35,8 +35,8 @@ fn get_cca(group_config: &SenderGroupConfig) -> Box<dyn CongestionControl> {
         CCConfig::IncreaseBdpCC => Box::new(cc::IncreaseBdpCC::default()),
         CCConfig::Copa => Box::new(copa::Copa::default()),
         CCConfig::Copa2 => Box::new(copa2::Copa2::new(group_config.delay)),
-        CCConfig::NDD => Box::new(ndd::NDD::default()),
-        CCConfig::NDDSlow => Box::new(ndd_slow::NDDSlow::default()),
+        // CCConfig::NDD => Box::new(ndd::NDD::default()),
+        // CCConfig::NDDSlow => Box::new(ndd_slow::NDDSlow::default()),
         CCConfig::NDDProved => Box::new(ndd_proved::NDDProved::default()),
     }
 }

@@ -9,7 +9,6 @@ use rand_seeder::Seeder;
 use serde::Serialize;
 
 use crate::metrics::{CsvMetric, CsvMetricStruct, MetricRegistry};
-use crate::rtt_window::RTTWindow;
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
@@ -144,54 +143,43 @@ struct SendRecord {
 
 impl CsvMetricStruct for SendRecord {}
 
-struct QdelRecord {
-    time: Time,
-    qdel: Time,
-}
-
 pub struct NDDProved {
     name: String,
-    rng: StdRng,
+    s_rng: StdRng,
     p_rng_seed: u64,
 
     // -------------------------------------------------------------------------
     // METRICS
-    metric_registry: Option<MetricRegistry>,
-    slot_metric: Option<Rc<RefCell<CsvMetric>>>,
-    cwnd_update_metric: Option<Rc<RefCell<CsvMetric>>>,
-    cruise_metric: Option<Rc<RefCell<CsvMetric>>>,
-    ack_metric: Option<Rc<RefCell<CsvMetric>>>,
-    send_metric: Option<Rc<RefCell<CsvMetric>>>,
+    m_registery: Option<MetricRegistry>,
+    m_slot: Option<Rc<RefCell<CsvMetric>>>,
+    m_cwnd_update: Option<Rc<RefCell<CsvMetric>>>,
+    m_cruise: Option<Rc<RefCell<CsvMetric>>>,
+    m_ack: Option<Rc<RefCell<CsvMetric>>>,
+    m_send: Option<Rc<RefCell<CsvMetric>>>,
+    m_cwnd_event: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
     // Design parameters (derived from objectives)
-    p_cruise_measurement_duration: Time,
-    p_cruise_measurement_duration_multiplier: u64, // T in units of jitter.
-    p_cwnd_averaging_factor: f64,                  // alpha
-    p_cwnd_clamp_high: f64,                        // delta1
-    p_cwnd_clamp_low: f64,                         // delta2
-    p_probe_multiplier: f64,                       // gamma1
-    // p_gamma2: f64,                              // gamma1 * (T+D)/T
-    // p_gamma3: f64,                              // gamma1 * (T-D)/T
-    p_probe_duration: Time, // This can really be anything
-    p_contract_min_delay: Time,
-    p_slot_load_factor: u64,
-    p_probe_probability: f64, // = 1/(p_slot_load_factor * p_max_flow_count), so that in expectation we have one probe per round.
+    p_cwnd_averaging_factor: f64, // alpha
+    p_cwnd_clamp_high: f64,       // delta1
+    p_cwnd_clamp_low: f64,        // delta2
+    p_probe_multiplier: f64,      // gamma
+    p_probe_duration: Time,       // This can really be anything
+    p_contract_min_qdel: Time,
+    p_slots_per_round: u64,
 
     // Prior belief of network parameters (upper (ub) and lower (lb) bounds)
     p_ub_flow_count: u64,
-    p_ub_jitter: Time, // D
+    p_ub_rtterr: Time, // D
     p_ub_rtprop: Time,
-    p_lb_cwnd: f64, // packets
+    p_lb_cwnd_pkts: f64, // packets
     p_lb_intersend_time: Time,
 
     // -------------------------------------------------------------------------
     // STATE
-    s_latest_rtt: Time,
-    s_srtt: RTTWindow,
-    s_min_rtt: Time,
     s_cwnd: f64, // packets
+    s_min_rtprop: Time,
 
     // CCAC style monotonically increasing packet counters.
     s_tot_tx: u64,
@@ -199,6 +187,11 @@ pub struct NDDProved {
     s_tot_ld: u64,
     // ? I don't think CCAC formulation allowed false positives in loss
     // detection. So this might not work correctly.
+
+    // Slow start
+    s_ss_done: bool,
+    s_ss_end_initiated: bool,
+    s_ss_last_seq: u64,
 
     // Collision slot state (Slot level)
     s_slot_start_time: Time,
@@ -208,11 +201,12 @@ pub struct NDDProved {
     // State for N_R estimate (Round level)
     s_round_slots_till_now: u64,
     s_round_communicated_flow_count: f64,
-    // s_qdel_records: Vec<QdelRecord>,
 
     // Cruise state (get record/sample every T time (independent of slot time)
     s_round_max_cruise_rate: f64, // packets per second
     s_round_cruise_records: Vec<CruiseRecord>,
+    s_round_probed: bool,
+    s_round_probe_slot_idx: u64,
     s_latest_cruise_rate: f64, // packets per second
 
     // Probe state (for the slot in which we probe, the probe may be smaller
@@ -236,16 +230,6 @@ impl Display for NDDProved {
         writeln!(f, "p_rng_seed: {}", self.p_rng_seed)?;
         writeln!(
             f,
-            "p_cruise_measurement_duration: {}",
-            self.p_cruise_measurement_duration
-        )?;
-        writeln!(
-            f,
-            "p_cruise_measurement_duration_multiplier: {}",
-            self.p_cruise_measurement_duration_multiplier
-        )?;
-        writeln!(
-            f,
             "p_cwnd_averaging_factor: {}",
             self.p_cwnd_averaging_factor
         )?;
@@ -253,19 +237,38 @@ impl Display for NDDProved {
         writeln!(f, "p_cwnd_clamp_low: {}", self.p_cwnd_clamp_low)?;
         writeln!(f, "p_probe_multiplier: {}", self.p_probe_multiplier)?;
         writeln!(f, "p_probe_duration: {}", self.p_probe_duration)?;
-        writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_delay)?;
-        writeln!(f, "p_slot_load_factor: {}", self.p_slot_load_factor)?;
-        writeln!(f, "p_probe_probability: {}", self.p_probe_probability)?;
+        writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_qdel)?;
+        writeln!(f, "p_slot_load_factor: {}", self.p_slots_per_round)?;
         writeln!(f, "p_ub_flow_count: {}", self.p_ub_flow_count)?;
-        writeln!(f, "p_ub_jitter: {}", self.p_ub_jitter)?;
+        writeln!(f, "p_ub_jitter: {}", self.p_ub_rtterr)?;
         writeln!(f, "p_ub_rtprop: {}", self.p_ub_rtprop)?;
-        writeln!(f, "p_lb_cwnd: {}", self.p_lb_cwnd)?;
+        writeln!(f, "p_lb_cwnd: {}", self.p_lb_cwnd_pkts)?;
         writeln!(f, "p_lb_intersend_time: {}", self.p_lb_intersend_time)?;
         Ok(())
     }
 }
 
-// TODO: write derive macro to convert struct to csv row.
+#[derive(Serialize, Default)]
+enum CwndEvent {
+    #[default]
+    SlowStart,
+    SlowStartEnd,
+    ProbeGain,
+    ProbeDrain,
+    ProbeUpdate,
+    RProbeDrain,
+    RProbeRefill,
+}
+
+#[derive(Serialize, Default)]
+struct CwndEventMetric {
+    time: Time,
+    event: CwndEvent,
+    cwnd: f64,
+}
+
+impl CsvMetricStruct for CwndEventMetric {}
+
 #[derive(Serialize, Default)]
 struct CwndUpdateMetric {
     now: Time,
@@ -309,14 +312,19 @@ impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
         self.s_tot_ld += num_lost;
-        self.s_latest_rtt = rtt;
 
-        self.s_srtt.new_rtt_sample(rtt, now);
-        self.s_min_rtt = std::cmp::min(self.s_min_rtt, rtt);
+        self.log_ack_metric(now, cum_ack, rtt);
+
+        self.s_min_rtprop = std::cmp::min(self.s_min_rtprop, rtt);
         // TODO: timeout min_rtt estimate
 
         // ? split into measurement updates and cwnd action?
         self.check_update_cruise_state_and_rate(now, cum_ack);
+        self.update_probe_delay_if_allowed(cum_ack, rtt);
+        if !self.s_probe_ongoing {
+            self.update_communicated_flow_count(now, rtt);
+            self.update_slot_state(now, rtt);
+        }
 
         // ? We from from old state to next state. Since it is multi-variable,
         // we update the state variable by variable, but sometimes we need
@@ -324,51 +332,47 @@ impl CongestionControl for NDDProved {
         // the order to avoid this. Ideally, we can keep old and next state and
         // swap them at the end.
 
-        let mut probe_ended = false;
-        let mut cruise_ended = false;
-        if self.s_probe_ongoing {
-            self.update_probe_delay_if_allowed(cum_ack, rtt);
-            if !self.s_probe_initiated_end && self.should_initiate_probe_end(now, rtt) {
-                self.initiate_probe_end();
-            }
-            if self.s_probe_initiated_end && self.should_end_probe(cum_ack) {
-                self.end_probe();
-                self.update_cwnd_after_probe(now);
-                probe_ended = true;
-            }
-        } else {
-            // cruise ongoing
-            self.update_communicated_flow_count(now, rtt);
-            self.update_slot_state(now, rtt);
-            cruise_ended = self.slot_ended(now);
+        if !self.s_ss_done {
+            self.slow_start(now, rtt);
+            return;
         }
 
-        if cruise_ended || probe_ended {
+        if self.s_probe_ongoing && self.should_initiate_probe_end(now, rtt) {
+            self.initiate_probe_end(now);
+        }
+
+        let probe_ended = self.s_probe_ongoing && self.should_end_probe(cum_ack);
+        let cruise_ended = !self.s_probe_ongoing && self.slot_ended(now);
+
+        if probe_ended || cruise_ended {
             // slot ended
+            let round_ended = self.round_ended();
+            self.log_slot_metric(now, cruise_ended, probe_ended, round_ended);
+
+            if self.should_end_probe(cum_ack) {
+                self.update_cwnd_after_probe(now);
+                self.reset_probe_state();
+            }
 
             // TODO: we can follow convention that round ends after probe so
             // that we maximize information gathering?
-            let round_ended = self.round_ended();
-            self.log_slot_metric(now, cruise_ended, probe_ended, round_ended);
 
             if round_ended {
                 self.reset_round_state()
             }
 
-            if self.s_round_slots_till_now > 1 {
-                // NOTE: the slots > 1 allows us to have at least one
-                // cruise slot before any probe. Since round of flows need
-                // not overlap, this does not necessarily affect collision
-                // probability.
-                if self.should_start_probe() {
-                    self.start_probe(now);
-                }
+            // Round may have ended or a probe slow may have ended. We
+            // increment slots_till_now at the end, so if there has been at
+            // least one slot before for a total of at least 2 (including this
+            // one), then we are sure at least one cruise happened
+            if self.s_round_slots_till_now >= 1 && !self.s_round_probed && self.should_start_probe()
+            {
+                self.s_round_probed = true;
+                self.start_probe(now);
             }
 
             self.start_new_slot(now, rtt);
         }
-
-        self.log_ack_metric(now, cum_ack, rtt);
     }
 
     fn on_send(&mut self, now: Time, _seq_num: SeqNum, _uid: PktId) {
@@ -385,48 +389,18 @@ impl CongestionControl for NDDProved {
     }
 
     fn get_cwnd(&mut self) -> u64 {
-        self.s_cwnd as u64
-        // ? should we ceil it, by default it would floor? Since we have a
-        // p_min_cwnd lower cap, I think it should be fine.
+        f64::ceil(self.s_cwnd) as u64
     }
 
     fn get_intersend_time(&mut self) -> Time {
-        // TODO: is this the best rate value for cwnd?
-
-        // If we pace during probe, then do we do not get correct bandwidth
-        // estimate. If we do not pace during cruise, then we create
-        // self-induced jitter.
-
-        // if self.s_probe_ongoing {
-        //     self.p_lb_intersend_time
-        // }
-        // else {
-        //     std::cmp::max(
-        //         self.p_lb_intersend_time,
-        //         Time::from_micros((2e6 * self.s_srtt.get_srtt().secs() / self.s_cwnd) as u64),
-        //     )
-        // }
-
-        // All the following work. Pick any. With jitter, there may be burst of
-        // ACKs, so we should pace new transmissions.
-
-        // TODO: Ideally we can use min RTT in this slot.
-
-        // std::cmp::max(
-        //     self.p_lb_intersend_time,
-        //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-        // );
-
         std::cmp::max(
             self.p_lb_intersend_time,
-            Time::from_micros((self.s_srtt.get_srtt().micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
         )
-
-        // self.p_lb_intersend_time
     }
 
     fn on_timeout(&mut self) {
-        self.s_cwnd = self.p_lb_cwnd;
+        self.s_cwnd = self.p_lb_cwnd_pkts;
     }
 
     fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
@@ -437,51 +411,96 @@ impl CongestionControl for NDDProved {
         // self.rng = StdRng::seed_from_u64(self.p_rng_seed);
         let unique_str = &(name.to_owned() + self.p_rng_seed.to_string().as_str());
         let seed = Seeder::from(unique_str).make_seed::<[u8; 32]>();
-        self.rng = StdRng::from_seed(seed);
+        self.s_rng = StdRng::from_seed(seed);
 
         println!("Initialized NDDProved {}", name);
         println!("{}", self);
     }
 
     fn finish(&self) {
-        if let Some(metric_registry) = &self.metric_registry {
+        if let Some(metric_registry) = &self.m_registery {
             metric_registry.finish();
         }
     }
 }
 
 impl NDDProved {
+    fn slow_start(&mut self, now: Time, rtt: Time) {
+        let last_snd_seq = self.s_tot_tx;
+        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
+
+        let should_init_ss_end =
+            rtt > (self.s_min_rtprop + self.p_contract_min_qdel + self.p_ub_rtterr);
+        let ss_ended = self.s_ss_last_seq > 0 && last_recv_seq > self.s_ss_last_seq;
+
+        if !self.s_ss_end_initiated {
+            if !should_init_ss_end {
+                self.s_cwnd += 1.;
+                self.log_cwnd_event(now, CwndEvent::SlowStart);
+            } else {
+                self.s_cwnd /= 2.;
+                self.s_cwnd = float_max(self.s_cwnd, self.p_lb_cwnd_pkts);
+                self.log_cwnd_event(now, CwndEvent::SlowStartEnd);
+                self.s_ss_end_initiated = true;
+                self.s_ss_last_seq = last_snd_seq;
+            }
+        } else {
+            if ss_ended {
+                self.s_ss_done = true;
+                self.reset_round_state();
+                self.start_new_slot(now, rtt);
+            } else {
+                // ss end initiated but not yet ended. do nothing.
+            }
+        }
+    }
+
     fn init_metrics(&mut self, metrics_config_file_: Option<String>) {
         if let Some(metrics_config_file) = metrics_config_file_ {
-            self.metric_registry = Some(MetricRegistry::new(&metrics_config_file));
+            self.m_registery = Some(MetricRegistry::new(&metrics_config_file));
         }
-        self.slot_metric = self
-            .metric_registry
+        self.m_slot = self
+            .m_registery
             .as_mut()
             .unwrap()
             .register_csv_metric(&(self.name.to_owned() + "slot"), SlotMetric::get_columns());
-        self.cwnd_update_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+        self.m_cwnd_update = self.m_registery.as_mut().unwrap().register_csv_metric(
             &(self.name.to_owned() + "cwnd_update"),
             CwndUpdateMetric::get_columns(),
         );
-        self.cruise_metric = self.metric_registry.as_mut().unwrap().register_csv_metric(
+        self.m_cruise = self.m_registery.as_mut().unwrap().register_csv_metric(
             &(self.name.to_owned() + "cruise"),
             CruiseRecord::get_columns(),
         );
-        self.ack_metric = self
-            .metric_registry
+        self.m_ack = self
+            .m_registery
             .as_mut()
             .unwrap()
             .register_csv_metric(&(self.name.to_owned() + "ack"), AckRecord::get_columns());
-        self.send_metric = self
-            .metric_registry
+        self.m_send = self
+            .m_registery
             .as_mut()
             .unwrap()
             .register_csv_metric(&(self.name.to_owned() + "send"), SendRecord::get_columns());
+        self.m_cwnd_event = self.m_registery.as_mut().unwrap().register_csv_metric(
+            &(self.name.to_owned() + "cwnd_event"),
+            CwndEventMetric::get_columns(),
+        );
+    }
+
+    fn log_cwnd_event(&self, now: Time, cwnd_event: CwndEvent) {
+        self.m_cwnd_event.as_ref().unwrap().borrow_mut().log(
+            CwndEventMetric {
+                time: now,
+                event: cwnd_event,
+                cwnd: self.s_cwnd,
+            }
+            .to_row(),
+        );
     }
 
     fn log_send_metric(&self, now: Time) {
-        self.send_metric.as_ref().unwrap().borrow_mut().log(
+        self.m_send.as_ref().unwrap().borrow_mut().log(
             SendRecord {
                 time: now,
                 tot_tx: self.s_tot_tx,
@@ -496,7 +515,7 @@ impl NDDProved {
     }
 
     fn log_ack_metric(&self, now: Time, cum_ack: SeqNum, rtt: Time) {
-        self.ack_metric.as_ref().unwrap().borrow_mut().log(
+        self.m_ack.as_ref().unwrap().borrow_mut().log(
             AckRecord {
                 time: now,
                 tot_tx: self.s_tot_tx,
@@ -515,18 +534,17 @@ impl NDDProved {
     }
 
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
-        if self.s_probe_start_time.is_none() {
-            false
-        } else {
-            now - self.s_probe_start_time.unwrap() >= self.p_probe_duration
-        }
+        !self.s_probe_initiated_end
+            && self.s_probe_start_time.is_some()
+            && now - self.s_probe_start_time.unwrap() >= self.p_probe_duration
     }
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
         // TODO: is it really true that this is the last packet with any excess
         // delay. After cwnd drop, delay should decrease linearly right?
         // self.s_tot_rx + self.s_tot_ld >= self.s_probe_last_seq.unwrap() + 1
-        self.s_tot_rx + self.s_tot_ld >= self.s_probe_drain_last_seq.unwrap() + 1
+        self.s_probe_initiated_end
+            && self.s_tot_rx + self.s_tot_ld >= self.s_probe_drain_last_seq.unwrap() + 1
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
@@ -548,9 +566,9 @@ impl NDDProved {
     }
 
     fn update_probe_delay_if_allowed(&mut self, _ack: SeqNum, rtt: Time) {
-        if self.is_ack_part_of_excess_duration(_ack) {
+        if self.s_probe_ongoing && self.is_ack_part_of_excess_duration(_ack) {
             // update excess delay
-            let delay = rtt - self.s_min_rtt;
+            let delay = rtt - self.s_min_rtprop;
             if self.s_probe_min_qdel_during.is_none() {
                 self.s_probe_min_qdel_during = Some(delay);
             }
@@ -559,7 +577,7 @@ impl NDDProved {
         }
     }
 
-    fn initiate_probe_end(&mut self) {
+    fn initiate_probe_end(&mut self, now: Time) {
         self.s_probe_last_seq = Some(std::cmp::max(
             self.s_probe_first_seq.unwrap(),
             self.s_tot_tx,
@@ -571,10 +589,7 @@ impl NDDProved {
         self.s_probe_initiated_end = true;
         self.s_probe_drain_last_seq =
             Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
-    }
-
-    fn end_probe(&mut self) {
-        self.s_probe_ongoing = false;
+        self.log_cwnd_event(now, CwndEvent::ProbeDrain);
     }
 
     fn log_cwnd_update(
@@ -587,7 +602,7 @@ impl NDDProved {
         target_cwnd: Option<f64>,
         probe_cwnd_after: f64,
     ) {
-        self.cwnd_update_metric.as_ref().unwrap().borrow_mut().log(
+        self.m_cwnd_update.as_ref().unwrap().borrow_mut().log(
             CwndUpdateMetric {
                 now,
                 probe_cwnd_before,
@@ -624,8 +639,13 @@ impl NDDProved {
             let mut flow_count_estimate = bandwidth_estimate / self.s_round_max_cruise_rate;
             flow_count_estimate = float_max(flow_count_estimate, 1.);
             flow_count_estimate = float_min(flow_count_estimate, self.p_ub_flow_count as f64);
-            let target_cwnd =
-                self.s_cwnd * flow_count_estimate / self.s_round_communicated_flow_count;
+            // let target_cwnd =
+            //     self.s_cwnd * flow_count_estimate / self.s_round_communicated_flow_count;
+            let target_cwnd = self.s_cwnd
+                * (self.s_min_rtprop.secs()
+                    + self.p_contract_min_qdel.secs() * flow_count_estimate)
+                / (self.s_min_rtprop.secs()
+                    + self.p_contract_min_qdel.secs() * self.s_round_communicated_flow_count);
             next_cwnd = (1. - self.p_cwnd_averaging_factor) * prev_cwnd
                 + self.p_cwnd_averaging_factor * target_cwnd;
 
@@ -636,7 +656,7 @@ impl NDDProved {
 
         next_cwnd = float_min(next_cwnd, self.p_cwnd_clamp_high * prev_cwnd);
         next_cwnd = float_max(next_cwnd, prev_cwnd / self.p_cwnd_clamp_low);
-        next_cwnd = float_max(next_cwnd, self.p_lb_cwnd);
+        next_cwnd = float_max(next_cwnd, self.p_lb_cwnd_pkts);
 
         self.log_cwnd_update(
             now,
@@ -648,6 +668,7 @@ impl NDDProved {
             next_cwnd,
         );
         self.s_cwnd = f64::ceil(next_cwnd);
+        self.log_cwnd_event(now, CwndEvent::ProbeUpdate);
     }
 
     fn start_probe(&mut self, now: Time) {
@@ -663,13 +684,14 @@ impl NDDProved {
             self.p_probe_multiplier
                 * self.s_round_max_cruise_rate
                 * round_communicated_flow_count
-                * self.p_ub_jitter.secs(),
+                * self.p_ub_rtterr.secs(),
         );
         assert!(s_excess_amount > 0.);
         self.s_probe_excess_amount = s_excess_amount as u64;
         self.s_cwnd = self.s_probe_cwnd_before + (self.s_probe_excess_amount as f64);
         self.s_probe_last_seq = None;
         self.s_probe_drain_last_seq = None;
+        self.log_cwnd_event(now, CwndEvent::ProbeGain);
 
         self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
         // The first seq is our estimation of when the inflight would have
@@ -696,7 +718,7 @@ impl NDDProved {
         self.s_probe_ongoing = false;
         self.s_probe_initiated_end = false;
         self.s_probe_start_time = None;
-        self.s_probe_cwnd_before = self.p_lb_cwnd;
+        self.s_probe_cwnd_before = self.p_lb_cwnd_pkts;
         self.s_probe_min_qdel_before = Time::from_millis(0);
         self.s_probe_first_seq = None;
         self.s_probe_last_seq = None;
@@ -744,7 +766,7 @@ impl NDDProved {
 
     fn log_filled_cruise_entry(&self) {
         let last_record = self.s_round_cruise_records.last().unwrap();
-        self.cruise_metric
+        self.m_cruise
             .as_ref()
             .unwrap()
             .borrow_mut()
@@ -774,14 +796,14 @@ impl NDDProved {
     fn update_communicated_flow_count(&mut self, now: Time, rtt: Time) {
         // ? should we just use min queueing delay. I guess the min queueing
         // delay is over a slot, we want min over the round.
-        let qdel = rtt - self.s_min_rtt;
+        let qdel = rtt - self.s_min_rtprop;
         // self.s_queueing_delay_records.push(DelayRecord {
         //     time: now,
         //     queueing_delay,
         // });
 
         // min delay over the round (not just slot)
-        let this_flow_count = (qdel.micros() as f64) / (self.p_contract_min_delay.micros() as f64);
+        let this_flow_count = (qdel.micros() as f64) / (self.p_contract_min_qdel.micros() as f64);
         self.s_round_communicated_flow_count =
             float_min(self.s_round_communicated_flow_count, this_flow_count);
 
@@ -802,19 +824,18 @@ impl NDDProved {
         // Slot duration is max {max rtprop + queueing delay + probe_duration, T}
 
         // ? We want queueing delay measurement, so that all flows have roughly
-        // similar slot sizes. Currently taken min queueing delay of latest
+        // similar slot sizes. Currently taken max queueing delay of latest
         // slot.
         let mut slot_duration =
             self.p_probe_duration + self.p_ub_rtprop * 3 + self.s_slot_max_qdel * 3;
         // ^^ Roughly 2 rtts + probe duration. max_rtprop + max_qdel is ub on
         // rtt.
-        slot_duration = std::cmp::max(slot_duration, self.p_cruise_measurement_duration);
 
         now >= self.s_slot_start_time + slot_duration
     }
 
     fn update_slot_state(&mut self, _now: Time, rtt: Time) {
-        let queueing_delay = rtt - self.s_min_rtt;
+        let queueing_delay = rtt - self.s_min_rtprop;
         self.s_slot_max_qdel = std::cmp::max(self.s_slot_max_qdel, queueing_delay);
 
         if self.s_slot_min_qdel.is_none() {
@@ -826,13 +847,13 @@ impl NDDProved {
     fn start_new_slot(&mut self, now: Time, rtt: Time) {
         // ? Should we keep some state from previous slot for the next slot?
         self.s_slot_start_time = now;
-        self.s_slot_max_qdel = rtt - self.s_min_rtt;
-        self.s_slot_min_qdel = Some(rtt - self.s_min_rtt);
+        self.s_slot_max_qdel = rtt - self.s_min_rtprop;
+        self.s_slot_min_qdel = Some(rtt - self.s_min_rtprop);
         self.s_round_slots_till_now += 1;
     }
 
     fn round_ended(&self) -> bool {
-        self.s_round_slots_till_now >= self.p_ub_flow_count * self.p_slot_load_factor as u64
+        self.s_round_slots_till_now >= self.p_slots_per_round
     }
 
     fn reset_round_state(&mut self) {
@@ -842,10 +863,11 @@ impl NDDProved {
 
         self.s_round_slots_till_now = 0; // count
         self.s_round_communicated_flow_count = self.p_ub_flow_count as f64; // min
-        self.s_round_cruise_records.clear();
-        self.s_round_max_cruise_rate = 0.; // max
 
-        // self.s_queueing_delay_records.clear();  // min
+        self.s_round_max_cruise_rate = 0.; // max
+        self.s_round_cruise_records.clear();
+        self.s_round_probed = false;
+        self.s_round_probe_slot_idx = 1 + self.s_rng.gen_range(0, self.p_slots_per_round);
 
         // ? Currently choosing to clear cruise records altogether. This will
         // force one cruise measurement before probe. Should we instead keep some
@@ -858,15 +880,15 @@ impl NDDProved {
     }
 
     fn should_start_probe(&mut self) -> bool {
-        self.rng.gen_bool(self.p_probe_probability)
+        // self.s_round_probe_slot_idx >= self.s_round_slots_till_now
 
-        // // Deterministic probes that do not collide
-        // let flow_id: u64 = self.name.parse().unwrap();
-        // self.s_round_slots_till_now == flow_id
+        // deterministic probes that do not collide
+        let flow_id: u64 = self.name.parse().unwrap();
+        self.s_round_slots_till_now >= flow_id / 2
     }
 
     fn log_slot_metric(&self, now: Time, cruise_ended: bool, probe_ended: bool, round_ended: bool) {
-        self.slot_metric.as_ref().unwrap().borrow_mut().log(
+        self.m_slot.as_ref().unwrap().borrow_mut().log(
             SlotMetric {
                 start_time: self.s_slot_start_time,
                 end_time: now,
@@ -889,53 +911,47 @@ impl NDDProved {
 impl Default for NDDProved {
     fn default() -> Self {
         let rng_seed = 42;
-        let t_by_d = 4; // T/D, duration of cruise measurement relative to jitter.
-        let jitter_belief = Time::from_millis(10);
-        let max_rtprop = Time::from_millis(100);
         let slot_load_factor = 3;
         let max_flow_count = 10;
         let min_cwnd = 2.; // packets
 
         NDDProved {
             name: "".to_string(),
-            rng: StdRng::seed_from_u64(rng_seed),
+            s_rng: StdRng::seed_from_u64(rng_seed),
             p_rng_seed: rng_seed,
 
-            metric_registry: None,
-            slot_metric: None,
-            cwnd_update_metric: None,
-            cruise_metric: None,
-            ack_metric: None,
-            send_metric: None,
+            m_registery: None,
+            m_slot: None,
+            m_cwnd_update: None,
+            m_cruise: None,
+            m_ack: None,
+            m_send: None,
+            m_cwnd_event: None,
 
-            p_cruise_measurement_duration: jitter_belief * t_by_d,
-            p_cruise_measurement_duration_multiplier: t_by_d,
-            p_cwnd_averaging_factor: 0.5,
-            p_cwnd_clamp_high: 1.2,
-            p_cwnd_clamp_low: 1.1,
+            p_cwnd_averaging_factor: 1.,
+            p_cwnd_clamp_high: 1.3,
+            p_cwnd_clamp_low: 1.3,
             p_probe_multiplier: 4.,
-            p_probe_duration: jitter_belief, // ?
-            p_contract_min_delay: Time::from_micros(max_rtprop.micros() / 2), // ? ceil vs floor
-            p_slot_load_factor: slot_load_factor,
-            p_probe_probability: 1. / ((slot_load_factor as f64) * (max_flow_count as f64)),
+            p_probe_duration: Time::from_millis(500), // ?
+            p_contract_min_qdel: Time::from_millis(10),
+            p_slots_per_round: slot_load_factor * max_flow_count,
 
             p_ub_flow_count: max_flow_count,
-            p_ub_jitter: jitter_belief,
-            p_ub_rtprop: max_rtprop,
-            p_lb_cwnd: min_cwnd,
+            p_ub_rtterr: Time::from_millis(10),
+            p_ub_rtprop: Time::from_millis(50),
+            p_lb_cwnd_pkts: min_cwnd,
             p_lb_intersend_time: Time::from_micros(10),
             // Corresponds to rate of 1/100 pkts per ms or roughly 0.12 Mbps.
-
-            // we only use this for srtt which is independent of hist_period,
-            // so any value here is okay.
-            s_latest_rtt: Time::from_millis(0),
-            s_srtt: RTTWindow::new(Time::from_secs(10)),
-            s_min_rtt: max_rtprop,
             s_cwnd: min_cwnd,
+            s_min_rtprop: Time::from_millis(50),
 
             s_tot_tx: 0,
             s_tot_rx: 0,
             s_tot_ld: 0,
+
+            s_ss_done: false,
+            s_ss_end_initiated: false,
+            s_ss_last_seq: 0,
 
             s_slot_start_time: Time::from_micros(0),
             s_slot_max_qdel: Time::from_millis(0),
@@ -943,10 +959,11 @@ impl Default for NDDProved {
 
             s_round_slots_till_now: 0,
             s_round_communicated_flow_count: max_flow_count as f64,
-
             // s_qdel_records: Vec::new(),
             s_round_max_cruise_rate: 0.,
             s_round_cruise_records: Vec::new(),
+            s_round_probe_slot_idx: 0, // we will reset round after slow start, so this value does not matter.
+            s_round_probed: false,
             s_latest_cruise_rate: 0.,
 
             s_probe_ongoing: false,
@@ -959,32 +976,6 @@ impl Default for NDDProved {
             s_probe_drain_last_seq: None,
             s_probe_min_qdel_during: None,
             s_probe_excess_amount: 0,
-        }
-    }
-}
-
-// test the rng
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_rng() {
-        let mut ndd = NDDProved::default();
-        let n_exp = 10;
-        let n_samples = 30 as u64;
-        for exp_id in 0..n_exp {
-            let mut positive = 0;
-            for sample_id in 0..n_samples {
-                let this_sample = ndd.should_start_probe();
-                positive += this_sample as u64;
-            }
-            println!(
-                "Exp {}: Positive rate: {} Expected rate: {}",
-                exp_id,
-                positive as f64 / n_samples as f64,
-                ndd.p_probe_probability
-            );
         }
     }
 }
