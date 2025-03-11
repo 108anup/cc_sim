@@ -153,18 +153,18 @@ fn create_parking_lot_topology<'a>(
             group_config,
             &mut id,
             &mut objs_to_reg,
-            &mut routers[i-1],
+            &mut routers[i - 1],
             &mut sched,
             tracer,
             config,
-            link_ids[i-1],
+            link_ids[i - 1],
             &mut acker_addrs,
         );
     }
 
     // Tell the routers to forward packets from flow 0 to the next hop link.
-    for i in 0..hops-1 {
-        let port = routers[i].add_port(link_ids[i+1]);
+    for i in 0..hops - 1 {
+        let port = routers[i].add_port(link_ids[i + 1]);
         routers[i].add_route(acker_addrs[0], port);
     }
 

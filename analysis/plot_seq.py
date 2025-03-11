@@ -9,6 +9,8 @@ import plotly.offline
 def get_parser():
     parser = argparse.ArgumentParser(description='Plot sequence data')
     parser.add_argument('-i', '--input', type=str, help='Input file')
+    parser.add_argument('-a', '--around', type=int, help='plot around this time', default=None)
+    parser.add_argument('-d', '--duration', type=int, help='plot d seconds around a', default=None)
     parser.add_argument('-s', '--start', type=int, help='Start time', default=None)
     parser.add_argument('-e', '--end', type=int, help='End time', default=None)
     return parser
@@ -39,6 +41,9 @@ def plot_timeseries(args):
     send_name = ack_name.replace('ack', 'send')
     send_path = os.path.join(dpath, send_name)
     sdf = pd.read_csv(send_path, header='infer')  # Send df
+    if args.around is not None:
+        args.start = args.around - args.duration * 1e6
+        args.end = args.around + args.duration * 1e6
     if args.start is not None:
         df = df[df["time"] >= args.start]
         sdf = sdf[sdf["time"] >= args.start]
