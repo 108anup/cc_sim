@@ -690,7 +690,7 @@ impl NDDProved {
         if self.s_probe_inflightmatch_seq.is_none() {
             if last_recv_seq > self.s_probe_start_seq.unwrap() {
                 self.s_probe_inflightmatch_seq = Some(last_snd_seq);
-                if self.f_wait_rtt_after_probe {
+                if !self.f_wait_rtt_after_probe {
                     self.s_probe_first_seq = Some(last_snd_seq);
                     self.s_probe_start_time = Some(now);
                 }
@@ -701,7 +701,7 @@ impl NDDProved {
                 self.s_probe_start_time = Some(now);
             }
         } else if self.s_probe_last_seq.is_none() {
-            if (now > self.s_probe_start_time.unwrap() + self.p_probe_duration) {
+            if now > self.s_probe_start_time.unwrap() + self.p_probe_duration {
                 self.s_probe_last_seq = Some(last_snd_seq);
             }
         }
