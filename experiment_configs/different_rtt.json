@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 500000000,
+  "sim_dur": 10000000000,
   "log": {
     "out_terminal": "png",
     "out_file": "different_rtt.png",
@@ -16,9 +16,10 @@
       ]
     ],
     "stats_file": null,
-    "link_bucket_size": 100000
+    "link_bucket_size": 500000
   },
   "topo": {
+    "topo_type": "Dumbbell",
     "link": {
       "Const": 1500000
     },
@@ -26,22 +27,22 @@
     "sender_groups": [
       {
         "num_senders": 1,
-        "delay": 50000,
-        "agg_intersend": {
-          "Const": 0
-        },
-        "cc": {"Const": {"cwnd": 40, "intersend": 2}},
-        "start_time": 10000000,
-        "tx_length": "Infinite"
-      },
-      {
-        "num_senders": 1,
         "delay": 100000,
         "agg_intersend": {
           "Const": 0
         },
-        "cc": {"Const": {"cwnd": 80, "intersend": 3}},
-        "start_time": 250025000,
+        "cc": "NDDProved",
+        "start_time": 0,
+        "tx_length": "Infinite"
+      },
+      {
+        "num_senders": 1,
+        "delay": 1000000,
+        "agg_intersend": {
+          "Const": 0
+        },
+        "cc": "NDDProved",
+        "start_time": 0,
         "tx_length": "Infinite"
       }
     ]

@@ -159,6 +159,10 @@ pub struct NDDProved {
     m_cwnd_event: Option<Rc<RefCell<CsvMetric>>>,
 
     // -------------------------------------------------------------------------
+    // FEATURES
+    f_wait_rtt_after_probe: bool,
+
+    // -------------------------------------------------------------------------
     // PARAMETERS
     // Design parameters (derived from objectives)
     p_cwnd_averaging_factor: f64, // alpha
@@ -216,10 +220,11 @@ pub struct NDDProved {
     s_probe_start_time: Option<Time>,
     s_probe_cwnd_before: f64,
     s_probe_min_qdel_before: Time,
+    s_probe_min_qdel_during: Option<Time>,
+    s_probe_start_seq: Option<u64>,
+    s_probe_inflightmatch_seq: Option<u64>,
     s_probe_first_seq: Option<u64>,
     s_probe_last_seq: Option<u64>,
-    s_probe_drain_last_seq: Option<u64>,
-    s_probe_min_qdel_during: Option<Time>,
     s_probe_excess_amount: u64, // packets
 }
 
@@ -325,6 +330,7 @@ impl CongestionControl for NDDProved {
             self.update_communicated_flow_count(now, rtt);
             self.update_slot_state(now, rtt);
         }
+        self.update_probe_state(now);
 
         // ? We from from old state to next state. Since it is multi-variable,
         // we update the state variable by variable, but sometimes we need
@@ -378,12 +384,12 @@ impl CongestionControl for NDDProved {
     fn on_send(&mut self, now: Time, _seq_num: SeqNum, _uid: PktId) {
         self.s_tot_tx += 1;
 
-        if self.s_probe_ongoing
-            && self.s_probe_start_time.is_none()
-            && self.s_tot_tx >= self.s_probe_first_seq.unwrap()
-        {
-            self.s_probe_start_time = Some(now);
-        }
+        //if self.s_probe_ongoing
+        //    && self.s_probe_start_time.is_none()
+        //    && self.s_tot_tx >= self.s_probe_first_seq.unwrap()
+        //{
+        //    self.s_probe_start_time = Some(now);
+        //}
 
         self.log_send_metric(now);
     }
@@ -393,10 +399,14 @@ impl CongestionControl for NDDProved {
     }
 
     fn get_intersend_time(&mut self) -> Time {
-        std::cmp::max(
-            self.p_lb_intersend_time,
-            Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-        )
+        if self.s_min_rtprop.micros() == u64::MAX {
+            self.p_lb_intersend_time
+        } else {
+            std::cmp::max(
+                self.p_lb_intersend_time,
+                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            )
+        }
     }
 
     fn on_timeout(&mut self) {
@@ -534,17 +544,15 @@ impl NDDProved {
     }
 
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
+        let last_snd_seq = self.s_tot_tx;
         !self.s_probe_initiated_end
-            && self.s_probe_start_time.is_some()
-            && now - self.s_probe_start_time.unwrap() >= self.p_probe_duration
+            && self.s_probe_last_seq.is_some() && last_snd_seq >= self.s_probe_last_seq.unwrap()
     }
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
-        // TODO: is it really true that this is the last packet with any excess
-        // delay. After cwnd drop, delay should decrease linearly right?
-        // self.s_tot_rx + self.s_tot_ld >= self.s_probe_last_seq.unwrap() + 1
+        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
         self.s_probe_initiated_end
-            && self.s_tot_rx + self.s_tot_ld >= self.s_probe_drain_last_seq.unwrap() + 1
+            && last_recv_seq > self.s_probe_last_seq.unwrap()
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
@@ -578,17 +586,17 @@ impl NDDProved {
     }
 
     fn initiate_probe_end(&mut self, now: Time) {
-        self.s_probe_last_seq = Some(std::cmp::max(
-            self.s_probe_first_seq.unwrap(),
-            self.s_tot_tx,
-        ));
+        //self.s_probe_last_seq = Some(std::cmp::max(
+        //    self.s_probe_first_seq.unwrap(),
+        //    self.s_tot_tx,
+        //));
         // The max ensures that even if probe duration is very small (if probe
         // rate too low), the probe contains at least 1 pkt which experiences
         // full delay.
         self.s_cwnd = self.s_probe_cwnd_before;
         self.s_probe_initiated_end = true;
-        self.s_probe_drain_last_seq =
-            Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
+        //self.s_probe_drain_last_seq =
+        //    Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
         self.log_cwnd_event(now, CwndEvent::ProbeDrain);
     }
 
@@ -671,6 +679,34 @@ impl NDDProved {
         self.log_cwnd_event(now, CwndEvent::ProbeUpdate);
     }
 
+    fn update_probe_state(&mut self, now: Time) {
+        if !self.s_probe_ongoing {
+            return;
+        }
+
+        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
+        let last_snd_seq = self.s_tot_tx;
+
+        if self.s_probe_inflightmatch_seq.is_none() {
+            if last_recv_seq > self.s_probe_start_seq.unwrap() {
+                self.s_probe_inflightmatch_seq = Some(last_snd_seq);
+                if self.f_wait_rtt_after_probe {
+                    self.s_probe_first_seq = Some(last_snd_seq);
+                    self.s_probe_start_time = Some(now);
+                }
+            }
+        } else if self.s_probe_first_seq.is_none() {
+            if last_recv_seq > self.s_probe_inflightmatch_seq.unwrap() {
+                self.s_probe_first_seq = Some(last_snd_seq);
+                self.s_probe_start_time = Some(now);
+            }
+        } else if self.s_probe_last_seq.is_none() {
+            if (now > self.s_probe_start_time.unwrap() + self.p_probe_duration) {
+                self.s_probe_last_seq = Some(last_snd_seq);
+            }
+        }
+    }
+
     fn start_probe(&mut self, now: Time) {
         self.reset_probe_state();
         self.s_probe_ongoing = true;
@@ -679,6 +715,10 @@ impl NDDProved {
         self.s_probe_cwnd_before = self.s_cwnd;
         self.s_probe_min_qdel_before = self.s_slot_min_qdel.unwrap();
         self.s_probe_min_qdel_during = None;
+        self.s_probe_start_seq = Some(self.s_tot_tx);
+        self.s_probe_inflightmatch_seq = None;
+        self.s_probe_first_seq = None;
+        self.s_probe_last_seq = None;
         let round_communicated_flow_count = float_max(self.s_round_communicated_flow_count, 1.);
         let s_excess_amount = f64::ceil(
             self.p_probe_multiplier
@@ -688,12 +728,11 @@ impl NDDProved {
         );
         assert!(s_excess_amount > 0.);
         self.s_probe_excess_amount = s_excess_amount as u64;
+
         self.s_cwnd = self.s_probe_cwnd_before + (self.s_probe_excess_amount as f64);
-        self.s_probe_last_seq = None;
-        self.s_probe_drain_last_seq = None;
         self.log_cwnd_event(now, CwndEvent::ProbeGain);
 
-        self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
+        // self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
         // The first seq is our estimation of when the inflight would have
         // increased to the new cwnd. If cwnd is doubled, and our pacing rate
         // is twice cwnd/RTT, then that after sending a cwnd worth of packets
@@ -720,9 +759,10 @@ impl NDDProved {
         self.s_probe_start_time = None;
         self.s_probe_cwnd_before = self.p_lb_cwnd_pkts;
         self.s_probe_min_qdel_before = Time::from_millis(0);
+        self.s_probe_start_seq = None;
+        self.s_probe_inflightmatch_seq = None;
         self.s_probe_first_seq = None;
         self.s_probe_last_seq = None;
-        self.s_probe_drain_last_seq = None;
         self.s_probe_min_qdel_during = None;
         self.s_probe_excess_amount = 0;
     }
@@ -928,6 +968,8 @@ impl Default for NDDProved {
             m_send: None,
             m_cwnd_event: None,
 
+            f_wait_rtt_after_probe: true,
+
             p_cwnd_averaging_factor: 1.,
             p_cwnd_clamp_high: 1.3,
             p_cwnd_clamp_low: 1.3,
@@ -943,7 +985,7 @@ impl Default for NDDProved {
             p_lb_intersend_time: Time::from_micros(10),
             // Corresponds to rate of 1/100 pkts per ms or roughly 0.12 Mbps.
             s_cwnd: min_cwnd,
-            s_min_rtprop: Time::from_millis(50),
+            s_min_rtprop: Time::from_micros(u64::MAX),
 
             s_tot_tx: 0,
             s_tot_rx: 0,
@@ -971,9 +1013,10 @@ impl Default for NDDProved {
             s_probe_start_time: None,
             s_probe_cwnd_before: min_cwnd,
             s_probe_min_qdel_before: Time::from_millis(0),
+            s_probe_start_seq: None,
+            s_probe_inflightmatch_seq: None,
             s_probe_first_seq: None,
             s_probe_last_seq: None,
-            s_probe_drain_last_seq: None,
             s_probe_min_qdel_during: None,
             s_probe_excess_amount: 0,
         }
