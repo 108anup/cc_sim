@@ -546,13 +546,13 @@ impl NDDProved {
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
         let last_snd_seq = self.s_tot_tx;
         !self.s_probe_initiated_end
-            && self.s_probe_last_seq.is_some() && last_snd_seq >= self.s_probe_last_seq.unwrap()
+            && self.s_probe_last_seq.is_some()
+            && last_snd_seq >= self.s_probe_last_seq.unwrap()
     }
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
         let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
-        self.s_probe_initiated_end
-            && last_recv_seq > self.s_probe_last_seq.unwrap()
+        self.s_probe_initiated_end && last_recv_seq > self.s_probe_last_seq.unwrap()
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
