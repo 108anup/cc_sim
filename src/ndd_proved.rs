@@ -280,9 +280,13 @@ struct CwndUpdateMetric {
     probe_cwnd_before: f64,
     probe_min_qdel_before: Time,
     probe_min_qdel_during: Time,
+    s_probe_start_seq: Option<u64>,
+    s_probe_inflightmatch_seq: Option<u64>,
+    s_probe_first_seq: Option<u64>,
+    s_probe_last_seq: Option<u64>,
     probe_excess_amount: u64,
-    probe_excess_qdel: Time,
 
+    probe_excess_qdel: Time,
     communicated_flow_count: f64,
     round_max_cruise_rate: f64,
     bandwidth_estimate: Option<f64>,
@@ -600,6 +604,7 @@ impl NDDProved {
         self.log_cwnd_event(now, CwndEvent::ProbeDrain);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn log_cwnd_update(
         &self,
         now: Time,
@@ -616,6 +621,10 @@ impl NDDProved {
                 probe_cwnd_before,
                 probe_min_qdel_before: self.s_probe_min_qdel_before,
                 probe_min_qdel_during: self.s_probe_min_qdel_during.unwrap(),
+                s_probe_start_seq: self.s_probe_start_seq,
+                s_probe_inflightmatch_seq: self.s_probe_inflightmatch_seq,
+                s_probe_first_seq: self.s_probe_first_seq,
+                s_probe_last_seq: self.s_probe_last_seq,
                 probe_excess_amount: self.s_probe_excess_amount,
                 probe_excess_qdel,
                 bandwidth_estimate,
