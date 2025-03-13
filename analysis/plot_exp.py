@@ -1,14 +1,15 @@
 import argparse
 import os
+from collections import defaultdict
 from typing import Callable, List
+
 import matplotlib.pyplot as plt
 import pandas as pd
-
 
 SUFFIX = "cruise.csv"
 
 
-def plot_multi_exp(input_dir: str, output_dir: str,
+def plot_multi_exp(input_dir: str,
                    ext: str, plot_single_exp: Callable):
     experiments = defaultdict(list)
     for root, _, files in os.walk(input_dir):
@@ -32,12 +33,13 @@ def plot_single_exp(input_dir: str, files: List[str]):
 
     fig, ax = plt.subplots()
     for flow_id, df in cruise_dfs.items():
-        ax.post(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
+        ax.step(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
 
+    ax.legend()
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("ACK Rate (pps)")
     ax.grid()
-    fig.set_tight_layout(True)
+    fig.set_layout_engine('tight')
     fig.savefig(os.path.join(input_dir, "ack_rate.pdf"))
     plt.close(fig)
 
@@ -47,9 +49,11 @@ def main():
     parser.add_argument(
         '-i', '--input', required=True,
         type=str, action='store',
-        help='path to dmesg trace')
+        help='Input directory')
     args = parser.parse_args()
 
-    plot_multi_exp(args.input, 'cruise.csv', plot_single_exp)
+    plot_multi_exp(args.input, SUFFIX, plot_single_exp)
 
 
+if __name__ == "__main__":
+    main()
