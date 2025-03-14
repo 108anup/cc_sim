@@ -1,4 +1,5 @@
 //! Global configuration
+use crate::metrics::MetricConfig;
 use crate::base::BufferSize;
 use crate::random::RandomVariable;
 use crate::simulator::Time;
@@ -18,6 +19,19 @@ pub struct Config {
     // Random seed for reproducibility.
     pub random_seed: u8,
     pub metrics_config_file: Option<String>,
+    pub data_dir: Option<String>,
+    // ^^ this will override metrics_config_file as well as be used for tracer logs. If we need
+    // these to be to separate directories, then we need to add a separate parameter here.
+}
+
+impl Config {
+    pub fn get_metric_config(&self) -> Option<MetricConfig> {
+        if self.metrics_config_file.is_none() {
+            None
+        } else {
+            Some(MetricConfig::new(self.metrics_config_file.as_deref().unwrap(), self.data_dir.clone()))
+        }
+    }
 }
 
 /// Configure a `LinkTrace` for use in `Link`

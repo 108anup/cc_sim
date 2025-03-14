@@ -42,6 +42,7 @@ fn get_cca(group_config: &SenderGroupConfig) -> Box<dyn CongestionControl> {
 }
 
 fn create_flow<'a>(
+    flow_id: usize,
     group_config: &SenderGroupConfig,
     id: &mut usize,
     objs_to_reg: &mut Vec<Box<dyn NetObj + 'a>>,
@@ -61,8 +62,9 @@ fn create_flow<'a>(
 
     let acker_addr = sched.next_addr();
 
-    let name = tcp_sender_id.to_string();
-    ccalg.init(&name, config.metrics_config_file.clone());
+    // let name = tcp_sender_id.to_string();
+    let name = flow_id.to_string();
+    ccalg.init(&name, config.get_metric_config());
 
     let sender_addr = sched.next_addr();
     let tcp_sender = TcpSender::new(
@@ -138,6 +140,7 @@ fn create_parking_lot_topology<'a>(
     let mut objs_to_reg = Vec::<Box<dyn NetObj + 'a>>::new();
     // The first flow (flow 0 sees all the hops)
     create_flow(
+        0,
         group_config,
         &mut id,
         &mut objs_to_reg,
@@ -150,6 +153,7 @@ fn create_parking_lot_topology<'a>(
     );
     for i in 1..num_senders {
         create_flow(
+            i,
             group_config,
             &mut id,
             &mut objs_to_reg,
@@ -209,6 +213,7 @@ fn create_dumbbell_topology<'a>(
     let mut objs_to_reg = Vec::<Box<dyn NetObj + 'a>>::new();
 
     // Now create the senders
+    let mut flow_id = 0;
     for group_config in &config.topo.sender_groups {
         for _ in 0..group_config.num_senders {
             let mut ccalg = get_cca(group_config);
@@ -221,8 +226,10 @@ fn create_dumbbell_topology<'a>(
 
             let acker_addr = sched.next_addr();
 
-            let name = tcp_sender_id.to_string();
-            ccalg.init(&name, config.metrics_config_file.clone());
+            // let name = tcp_sender_id.to_string();
+            let name = flow_id.to_string();
+            flow_id += 1;
+            ccalg.init(&name, config.get_metric_config());
 
             // Create the sender and its delay module
             let sender_addr = sched.next_addr();

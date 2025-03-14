@@ -9,8 +9,8 @@ mod simulator;
 mod topology;
 mod tracer;
 mod transport;
-mod ndd;
-mod ndd_slow;
+// mod ndd;
+// mod ndd_slow;
 mod metrics;
 mod ndd_proved;
 // mod ndd_time;
@@ -102,6 +102,7 @@ fn main() -> Result<(), Error> {
             },
             random_seed: 0,
             metrics_config_file: None,
+            data_dir: None,
         }
     } else {
         eprintln!("{}", usage_string);

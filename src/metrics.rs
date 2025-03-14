@@ -122,6 +122,17 @@ pub struct MetricConfig {
     filters: Vec<MetricFilter>,
 }
 
+impl MetricConfig {
+    pub fn new(metric_config_file: &str, data_dir: Option<String>) -> Self {
+        let metric_config_reader = std::fs::File::open(metric_config_file).unwrap();
+        let mut metric_config: MetricConfig = serde_json::from_reader(metric_config_reader).unwrap();
+        if data_dir.is_some() {
+            metric_config.data_dir = data_dir.unwrap();
+        }
+        metric_config
+    }
+}
+
 pub struct MetricRegistry {
     config: MetricConfig,
     csv_metrics: HashMap<String, Rc<RefCell<CsvMetric>>>,
@@ -135,10 +146,9 @@ pub struct MetricRegistry {
 // track lifetimes of CC objects.
 
 impl MetricRegistry {
-    pub fn new(metric_config_file: &str) -> Self {
-        let metric_config_reader = std::fs::File::open(metric_config_file).unwrap();
+    pub fn new(config: MetricConfig) -> Self {
         Self {
-            config: serde_json::from_reader(metric_config_reader).unwrap(),
+            config,
             csv_metrics: HashMap::new(),
         }
     }

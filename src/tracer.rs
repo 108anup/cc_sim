@@ -10,6 +10,7 @@ use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::default::Default;
+use std::path::Path;
 
 /// One 'row' of a trace. Multiple objects can
 /// log simultaneously: uses interior mutability to enable this
@@ -353,13 +354,22 @@ impl<'a> Tracer<'a> {
 
     /// Should be called at end of simulation, so it can finish plotting/logging
     pub fn finalize(&self) -> Result<(), failure::Error> {
+        let out_dir = Path::new(if let Some(ref dir) = self.config.data_dir {
+            dir.as_str()
+        } else {
+            "."
+        });
+
         if self.config.log.cwnd.plot() {
             let mut fig = gnuplot::Figure::new();
             fig.set_terminal(
                 &self.config.log.out_terminal,
-                &("cwnd-".to_owned() + &self.config.log.out_file),
-            );
+                out_dir
+                    .join(&("cwnd-".to_owned() + &self.config.log.out_file))
+                    .to_str()
+                    .unwrap(),
 
+            );
             let ax = fig
                 .axes2d()
                 .set_x_label("Time (secs)", &[])
@@ -379,9 +389,12 @@ impl<'a> Tracer<'a> {
             let mut fig = gnuplot::Figure::new();
             fig.set_terminal(
                 &self.config.log.out_terminal,
-                &("rtt-".to_owned() + &self.config.log.out_file),
-            );
+                out_dir
+                    .join(&("rtt-".to_owned() + &self.config.log.out_file))
+                    .to_str()
+                    .unwrap(),
 
+            );
             let ax = fig
                 .axes2d()
                 .set_x_label("Time (secs)", &[])
@@ -410,7 +423,13 @@ impl<'a> Tracer<'a> {
                 let mut fig = gnuplot::Figure::new();
                 fig.set_terminal(
                     &self.config.log.out_terminal,
-                    &format!("link-rates-{}-{}", link_id, &self.config.log.out_file),
+                    out_dir
+                        .join(format!(
+                            "link-rates-{}-{}",
+                            link_id, &self.config.log.out_file
+                        ))
+                        .to_str()
+                        .unwrap(),
                 );
 
                 let ax = fig

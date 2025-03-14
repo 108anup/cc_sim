@@ -8,7 +8,7 @@ use rand::rngs::StdRng;
 use rand_seeder::Seeder;
 use serde::Serialize;
 
-use crate::metrics::{CsvMetric, CsvMetricStruct, MetricRegistry};
+use crate::metrics::{CsvMetric, CsvMetricStruct, MetricConfig, MetricRegistry};
 use crate::simulator::{PktId, SeqNum, Time};
 use crate::transport::CongestionControl;
 
@@ -417,9 +417,9 @@ impl CongestionControl for NDDProved {
         self.s_cwnd = self.p_lb_cwnd_pkts;
     }
 
-    fn init(&mut self, name: &str, metrics_config_file: Option<String>) {
+    fn init(&mut self, name: &str, metric_config: Option<MetricConfig>) {
         self.name = name.to_string();
-        self.init_metrics(metrics_config_file);
+        self.init_metrics(metric_config);
         self.reset_round_state();
         self.reset_probe_state();
         // self.rng = StdRng::seed_from_u64(self.p_rng_seed);
@@ -469,9 +469,9 @@ impl NDDProved {
         }
     }
 
-    fn init_metrics(&mut self, metrics_config_file_: Option<String>) {
-        if let Some(metrics_config_file) = metrics_config_file_ {
-            self.m_registery = Some(MetricRegistry::new(&metrics_config_file));
+    fn init_metrics(&mut self, metric_config_: Option<MetricConfig>) {
+        if let Some(metric_config) = metric_config_ {
+            self.m_registery = Some(MetricRegistry::new(metric_config));
         }
         self.m_slot = self
             .m_registery
@@ -932,8 +932,27 @@ impl NDDProved {
         // self.s_round_probe_slot_idx >= self.s_round_slots_till_now
 
         // deterministic probes that do not collide
+
+        // if there are n slots, then flow id to slot id mapping is:
+        // flow_id, slot_id
+        // 0, 0
+        // 1, n/2,
+        // 2, n/4,
+        // 3, 3n/4,
+        // 4, n/8,
+        // 5, 3n/8, ...
+
         let flow_id: u64 = self.name.parse().unwrap();
-        self.s_round_slots_till_now >= flow_id / 2
+        let pow_2_larger = if flow_id.is_power_of_two() {
+            flow_id << 1
+        } else {
+            flow_id.next_power_of_two()
+        };
+        let pow_2_leq = pow_2_larger >> 1;
+        let mut this_slot = self.p_slots_per_round * (2 * (flow_id - pow_2_leq) + 1) / pow_2_larger;
+        this_slot = this_slot % self.p_slots_per_round;
+
+        self.s_round_slots_till_now >= this_slot
     }
 
     fn log_slot_metric(&self, now: Time, cruise_ended: bool, probe_ended: bool, round_ended: bool) {

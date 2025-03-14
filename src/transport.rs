@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::metrics::MetricConfig;
 use crate::simulator::*;
 use crate::tracer::{TraceElem, Tracer};
 
@@ -21,7 +22,7 @@ pub trait CongestionControl {
     fn get_cwnd(&mut self) -> u64;
     /// Returns the minimum interval between any two transmitted packets
     fn get_intersend_time(&mut self) -> Time;
-    fn init(&mut self, name: &str, config_file_path: Option<String>) {}
+    fn init(&mut self, name: &str, metric_config: Option<MetricConfig>) {}
     fn finish(&self) {}
 }
 
@@ -44,8 +45,8 @@ impl CongestionControl for Box<dyn CongestionControl> {
     fn get_intersend_time(&mut self) -> Time {
         (**self).get_intersend_time()
     }
-    fn init(&mut self, name: &str, config_file_path: Option<String>) {
-        (**self).init(name, config_file_path)
+    fn init(&mut self, name: &str, metric_config: Option<MetricConfig>) {
+        (**self).init(name, metric_config)
     }
     fn finish(&self) {
         (**self).finish()
