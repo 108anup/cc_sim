@@ -5,6 +5,8 @@ from typing import Callable, List
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import multiprocessing as mp
+
 
 SUFFIX = "cruise.csv"
 
@@ -19,8 +21,12 @@ def plot_multi_exp(input_dir: str,
                 exp_dir = os.path.dirname(fpath)
                 experiments[exp_dir].append(fpath)
 
+    pool = mp.Pool(mp.cpu_count())
     for exp_dir, files in experiments.items():
-        plot_single_exp(exp_dir, files)
+        pool.apply_async(plot_single_exp, (exp_dir, files))
+
+    pool.close()
+    pool.join()
 
 
 def plot_single_exp(input_dir: str, files: List[str]):
@@ -32,8 +38,13 @@ def plot_single_exp(input_dir: str, files: List[str]):
         cruise_dfs[flow_id] = df
 
     fig, ax = plt.subplots()
+    mean_ack_rates = {}
     for flow_id, df in cruise_dfs.items():
         ax.step(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
+        mean_ack_rate = df["ack_rate"].mean()
+        mean_ack_rates[flow_id] = mean_ack_rate
+
+    print(input_dir, mean_ack_rates)
 
     ax.legend()
     ax.set_xlabel("Time (s)")

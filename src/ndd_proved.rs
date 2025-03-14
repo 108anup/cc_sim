@@ -911,7 +911,7 @@ impl NDDProved {
         // state.
 
         self.s_round_slots_till_now = 0; // count
-        self.s_round_communicated_flow_count = self.p_ub_flow_count as f64; // min
+        self.s_round_communicated_flow_count = f64::max_value(); // self.p_ub_flow_count as f64; // min
 
         self.s_round_max_cruise_rate = 0.; // max
         self.s_round_cruise_records.clear();
@@ -1028,7 +1028,7 @@ impl Default for NDDProved {
             s_slot_min_qdel: None,
 
             s_round_slots_till_now: 0,
-            s_round_communicated_flow_count: max_flow_count as f64,
+            s_round_communicated_flow_count: f64::max_value(), // max_flow_count as f64,
             // s_qdel_records: Vec::new(),
             s_round_max_cruise_rate: 0.,
             s_round_cruise_records: Vec::new(),
