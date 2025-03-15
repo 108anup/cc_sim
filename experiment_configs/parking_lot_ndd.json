@@ -1,42 +1,42 @@
 {
-    "pkt_size": 1500,
-    "sim_dur": 1000000000,
-    "log": {
-        "out_terminal": "png",
-        "out_file": "parking_lot_ndd.png",
-        "cwnd": "Plot",
-        "rtt": "Plot",
-        "sender_losses": "Plot",
-        "timeouts": "Plot",
-        "link_rates": "Plot",
-        "stats_intervals": [
-            [
-                0,
-                null
-            ]
-        ],
-        "stats_file": null,
-        "link_bucket_size": 500000
+  "pkt_size": 1500,
+  "sim_dur": 1000000000,
+  "log": {
+    "out_terminal": "png",
+    "out_file": "parking_lot_ndd.png",
+    "cwnd": "Plot",
+    "rtt": "Plot",
+    "sender_losses": "Plot",
+    "timeouts": "Plot",
+    "link_rates": "Plot",
+    "stats_intervals": [
+      [
+        0,
+        null
+      ]
+    ],
+    "stats_file": null,
+    "link_bucket_size": 500000
+  },
+  "topo": {
+    "topo_type": "ParkingLot",
+    "link": {
+      "Const": 1500000
     },
-    "topo": {
-        "topo_type": "ParkingLot",
-        "link": {
-            "Const": 1500000
+    "bufsize": "Infinite",
+    "sender_groups": [
+      {
+        "num_senders": 5,
+        "delay": 10000,
+        "agg_intersend": {
+          "Const": 0
         },
-        "bufsize": "Infinite",
-        "sender_groups": [
-            {
-                "num_senders": 5,
-                "delay": 10000,
-                "agg_intersend": {
-                    "Const": 0
-                },
-                "cc": "NDDProved",
-                "start_time": 0,
-                "tx_length": "Infinite"
-            }
-        ]
-    },
-    "random_seed": 0,
-    "metrics_config_file": "metrics_config.json"
+        "cc": "NDDProved",
+        "start_time": 0,
+        "tx_length": "Infinite"
+      }
+    ]
+  },
+  "random_seed": 0,
+  "metrics_config_file": "metrics_config.json"
 }

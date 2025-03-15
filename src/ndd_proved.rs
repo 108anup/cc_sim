@@ -161,6 +161,7 @@ pub struct NDDProved {
     // -------------------------------------------------------------------------
     // FEATURES
     f_wait_rtt_after_probe: bool,
+    f_deterministic_slot_idx: bool,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -243,7 +244,7 @@ impl Display for NDDProved {
         writeln!(f, "p_probe_multiplier: {}", self.p_probe_multiplier)?;
         writeln!(f, "p_probe_duration: {}", self.p_probe_duration)?;
         writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_qdel)?;
-        writeln!(f, "p_slot_load_factor: {}", self.p_slots_per_round)?;
+        writeln!(f, "p_slots_per_round: {}", self.p_slots_per_round)?;
         writeln!(f, "p_ub_flow_count: {}", self.p_ub_flow_count)?;
         writeln!(f, "p_ub_jitter: {}", self.p_ub_rtterr)?;
         writeln!(f, "p_ub_rtprop: {}", self.p_ub_rtprop)?;
@@ -929,30 +930,32 @@ impl NDDProved {
     }
 
     fn should_start_probe(&mut self) -> bool {
-        // self.s_round_probe_slot_idx >= self.s_round_slots_till_now
-
-        // deterministic probes that do not collide
-
-        // if there are n slots, then flow id to slot id mapping is:
-        // flow_id, slot_id
-        // 0, 0
-        // 1, n/2,
-        // 2, n/4,
-        // 3, 3n/4,
-        // 4, n/8,
-        // 5, 3n/8, ...
-
-        let flow_id: u64 = self.name.parse().unwrap();
-        let pow_2_larger = if flow_id.is_power_of_two() {
-            flow_id << 1
+        if !self.f_deterministic_slot_idx {
+            self.s_round_probe_slot_idx >= self.s_round_slots_till_now
         } else {
-            flow_id.next_power_of_two()
-        };
-        let pow_2_leq = pow_2_larger >> 1;
-        let mut this_slot = self.p_slots_per_round * (2 * (flow_id - pow_2_leq) + 1) / pow_2_larger;
-        this_slot = this_slot % self.p_slots_per_round;
+            // deterministic probes that do not collide
 
-        self.s_round_slots_till_now >= this_slot
+            // if there are n slots, then flow id to slot id mapping is:
+            // flow_id, slot_id
+            // 0, 0
+            // 1, n/2,
+            // 2, n/4,
+            // 3, 3n/4,
+            // 4, n/8,
+            // 5, 3n/8, ...
+
+            let flow_id: u64 = self.name.parse().unwrap();
+            let pow_2_larger = if flow_id.is_power_of_two() {
+                flow_id << 1
+            } else {
+                flow_id.next_power_of_two()
+            };
+            let pow_2_leq = pow_2_larger >> 1;
+            let mut this_slot = self.p_slots_per_round * (2 * (flow_id - pow_2_leq) + 1) / pow_2_larger;
+            this_slot = this_slot % self.p_slots_per_round;
+
+            return self.s_round_slots_till_now >= this_slot
+        }
     }
 
     fn log_slot_metric(&self, now: Time, cruise_ended: bool, probe_ended: bool, round_ended: bool) {
@@ -997,6 +1000,7 @@ impl Default for NDDProved {
             m_cwnd_event: None,
 
             f_wait_rtt_after_probe: true,
+            f_deterministic_slot_idx: false,
 
             p_cwnd_averaging_factor: 1.,
             p_cwnd_clamp_high: 1.3,

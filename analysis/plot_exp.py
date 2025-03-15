@@ -1,4 +1,5 @@
 import argparse
+import pprint
 import os
 from collections import defaultdict
 from typing import Callable, List
@@ -38,13 +39,17 @@ def plot_single_exp(input_dir: str, files: List[str]):
         cruise_dfs[flow_id] = df
 
     fig, ax = plt.subplots()
-    mean_ack_rates = {}
+    record = {}
     for flow_id, df in cruise_dfs.items():
         ax.step(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
         mean_ack_rate = df["ack_rate"].mean()
-        mean_ack_rates[flow_id] = mean_ack_rate
+        record[flow_id] = mean_ack_rate
 
-    print(input_dir, mean_ack_rates)
+    record["max_ack_rate"] = max(record.values())
+    record["min_ack_rate"] = min(record.values())
+    record["ratio"] = record["max_ack_rate"] / record["min_ack_rate"]
+    record["input_dir"] = input_dir
+    pprint.pprint(record)
 
     ax.legend()
     ax.set_xlabel("Time (s)")
