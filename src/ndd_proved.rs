@@ -6,7 +6,7 @@ use num::Float;
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use rand_seeder::Seeder;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::metrics::{CsvMetric, CsvMetricStruct, MetricConfig, MetricRegistry};
 use crate::simulator::{PktId, SeqNum, Time};
@@ -142,6 +142,46 @@ struct SendRecord {
 }
 
 impl CsvMetricStruct for SendRecord {}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct NDDParams {
+    rng_seed: u64,
+    p_cwnd_averaging_factor: f64,
+    p_cwnd_clamp_high: f64,
+    p_cwnd_clamp_low: f64,
+    p_probe_multiplier: f64,
+    p_probe_duration: Time,
+    p_contract_min_qdel: Time,
+    p_slots_per_round: u64,
+
+    p_ub_flow_count: u64,
+    p_ub_rtterr: Time,
+    p_ub_rtprop: Time,
+    p_lb_cwnd_pkts: f64,
+    p_lb_intersend_time: Time,
+}
+
+impl Default for NDDParams {
+    fn default() -> Self {
+        NDDParams {
+            rng_seed: 42,
+            p_cwnd_averaging_factor: 1.,
+            p_cwnd_clamp_high: 1.3,
+            p_cwnd_clamp_low: 1.3,
+            p_probe_multiplier: 4.,
+            p_probe_duration: Time::from_millis(10),
+            p_contract_min_qdel: Time::from_millis(10),
+            p_slots_per_round: 30,
+
+            p_ub_flow_count: 10,
+            p_ub_rtterr: Time::from_millis(10),
+            p_ub_rtprop: Time::from_millis(100),
+            p_lb_cwnd_pkts: 2.,
+            p_lb_intersend_time: Time::from_micros(10),
+        }
+    }
+}
 
 pub struct NDDProved {
     name: String,
@@ -977,19 +1017,12 @@ impl NDDProved {
             .to_row(),
         );
     }
-}
 
-impl Default for NDDProved {
-    fn default() -> Self {
-        let rng_seed = 42;
-        let slot_load_factor = 3;
-        let max_flow_count = 10;
-        let min_cwnd = 2.; // packets
-
-        NDDProved {
+    pub fn new(p: &NDDParams) -> Self {
+        Self {
             name: "".to_string(),
-            s_rng: StdRng::seed_from_u64(rng_seed),
-            p_rng_seed: rng_seed,
+            s_rng: StdRng::seed_from_u64(p.rng_seed),
+            p_rng_seed: p.rng_seed,
 
             m_registery: None,
             m_slot: None,
@@ -1002,21 +1035,21 @@ impl Default for NDDProved {
             f_wait_rtt_after_probe: true,
             f_deterministic_slot_idx: false,
 
-            p_cwnd_averaging_factor: 1.,
-            p_cwnd_clamp_high: 1.3,
-            p_cwnd_clamp_low: 1.3,
-            p_probe_multiplier: 4.,
-            p_probe_duration: Time::from_millis(500), // ?
-            p_contract_min_qdel: Time::from_millis(10),
-            p_slots_per_round: slot_load_factor * max_flow_count,
+            p_cwnd_averaging_factor: p.p_cwnd_averaging_factor,
+            p_cwnd_clamp_high: p.p_cwnd_clamp_high,
+            p_cwnd_clamp_low: p.p_cwnd_clamp_low,
+            p_probe_multiplier: p.p_probe_multiplier,
+            p_probe_duration: p.p_probe_duration,
+            p_contract_min_qdel: p.p_contract_min_qdel,
+            p_slots_per_round: p.p_slots_per_round,
 
-            p_ub_flow_count: max_flow_count,
-            p_ub_rtterr: Time::from_millis(10),
-            p_ub_rtprop: Time::from_millis(50),
-            p_lb_cwnd_pkts: min_cwnd,
-            p_lb_intersend_time: Time::from_micros(10),
+            p_ub_flow_count: p.p_ub_flow_count,
+            p_ub_rtterr: p.p_ub_rtterr,
+            p_ub_rtprop: p.p_ub_rtprop,
+            p_lb_cwnd_pkts: p.p_lb_cwnd_pkts,
+            p_lb_intersend_time: p.p_lb_intersend_time,
             // Corresponds to rate of 1/100 pkts per ms or roughly 0.12 Mbps.
-            s_cwnd: min_cwnd,
+            s_cwnd: p.p_lb_cwnd_pkts,
             s_min_rtprop: Time::from_micros(u64::MAX),
 
             s_tot_tx: 0,
@@ -1043,7 +1076,7 @@ impl Default for NDDProved {
             s_probe_ongoing: false,
             s_probe_initiated_end: false,
             s_probe_start_time: None,
-            s_probe_cwnd_before: min_cwnd,
+            s_probe_cwnd_before: p.p_lb_cwnd_pkts,
             s_probe_min_qdel_before: Time::from_millis(0),
             s_probe_start_seq: None,
             s_probe_inflightmatch_seq: None,

@@ -22,22 +22,22 @@ pub fn create_topology<'a>(config: &'a Config, tracer: &'a Tracer) -> Result<Sch
 }
 
 fn get_cca(group_config: &SenderGroupConfig) -> Box<dyn CongestionControl> {
-    match group_config.cc {
+    match &group_config.cc {
         CCConfig::Const { cwnd, intersend } => {
-            Box::new(cc::Const::new(cwnd, Time::from_micros(intersend)))
+            Box::new(cc::Const::new(*cwnd, Time::from_micros(*intersend)))
         }
         CCConfig::AIMD => Box::new(cc::AIMD::default()),
         CCConfig::InstantCC => Box::new(cc::InstantCC::default()),
-        CCConfig::OscInstantCC { k, omega } => Box::new(cc::OscInstantCC::new(k, omega)),
+        CCConfig::OscInstantCC { k, omega } => Box::new(cc::OscInstantCC::new(*k, *omega)),
         CCConfig::StableLinearCC { alpha, k } => {
-            Box::new(cc::StableLinearCC::new(alpha, k, group_config.delay))
+            Box::new(cc::StableLinearCC::new(*alpha, *k, group_config.delay))
         }
         CCConfig::IncreaseBdpCC => Box::new(cc::IncreaseBdpCC::default()),
         CCConfig::Copa => Box::new(copa::Copa::default()),
         CCConfig::Copa2 => Box::new(copa2::Copa2::new(group_config.delay)),
         // CCConfig::NDD => Box::new(ndd::NDD::default()),
         // CCConfig::NDDSlow => Box::new(ndd_slow::NDDSlow::default()),
-        CCConfig::NDDProved => Box::new(ndd_proved::NDDProved::default()),
+        CCConfig::NDDProved(p) => Box::new(ndd_proved::NDDProved::new(p)),
     }
 }
 

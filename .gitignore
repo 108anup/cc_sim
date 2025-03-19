@@ -8,3 +8,4 @@ Cargo.lock
 data
 data.bkp
 .ropeproject
+tmp/

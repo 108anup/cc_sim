@@ -1,5 +1,5 @@
 //! Global configuration
-use crate::metrics::MetricConfig;
+use crate::{metrics::MetricConfig, ndd_proved::NDDParams};
 use crate::base::BufferSize;
 use crate::random::RandomVariable;
 use crate::simulator::Time;
@@ -62,7 +62,7 @@ pub enum CCConfig {
     Copa2,
     // NDD,
     // NDDSlow,
-    NDDProved,
+    NDDProved(NDDParams),
 }
 
 /// A group of senders

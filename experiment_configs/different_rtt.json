@@ -31,7 +31,7 @@
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": {"NDDProved": {}},
         "start_time": 0,
         "tx_length": "Infinite"
       },
@@ -41,12 +41,13 @@
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": {"NDDProved": {}},
         "start_time": 0,
         "tx_length": "Infinite"
       }
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config.json"
+  "metrics_config_file": "metrics_config.json",
+  "data_dir": "tmp/different_rtt"
 }
