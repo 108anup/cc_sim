@@ -46,7 +46,7 @@ parking_lot_jstring = '''{
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": { "NDDProved": {} },
         "start_time": 0,
         "tx_length": "Infinite"
       }
@@ -58,7 +58,7 @@ parking_lot_jstring = '''{
 
 different_rtt_jstring = '''{
   "pkt_size": 1500,
-  "sim_dur": 10000000000,
+  "sim_dur": 1000000000,
   "log": {
     "out_terminal": "png",
     "out_file": "different_rtt.png",
@@ -89,7 +89,7 @@ different_rtt_jstring = '''{
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": { "NDDProved": {} },
         "start_time": 0,
         "tx_length": "Infinite"
       },
@@ -99,7 +99,7 @@ different_rtt_jstring = '''{
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": { "NDDProved": {} },
         "start_time": 0,
         "tx_length": "Infinite"
       }
@@ -123,19 +123,36 @@ def run(cfg: dict):
     print(f"Finished {run_path} in {end - start} seconds")
 
 
+def set_cc_config(cfg: dict, pdict: dict):
+    cc = {
+        "NDDProved": pdict
+    }
+    for sg in cfg["topo"]["sender_groups"]:
+        sg["cc"] = cc
+
+
 def different_rtt_config_list(args):
+    DELAY = 1000
     exp_path = args.output
     cfg_list = []
     _cfg = json.loads(different_rtt_jstring)
     _cfg["metrics_config_file"] = METRICS_CONFIG_FILE
-    for rttratio in [1, 2, 4, 8, 16, 32, 64, 128]:
-        run_path = os.path.join(exp_path, f"rttratio_{rttratio}")
+    for multiplier_exp in range(-3, 10):
         cfg = copy.deepcopy(_cfg)
-        cfg["topo"]["sender_groups"][0]["delay"] = 10000
-        cfg["topo"]["sender_groups"][1]["delay"] = 10000 * rttratio
-        os.makedirs(run_path, exist_ok=True)
-        cfg["data_dir"] = run_path
-        cfg_list.append(cfg)
+        multiplier = 2 ** multiplier_exp
+        pdict = {
+            "p_probe_multiplier": multiplier,
+            "p_ub_rtterr": DELAY,
+        }
+        set_cc_config(_cfg, pdict)
+        for rttratio_exp in range(1, 9):
+            rttratio = 1 << rttratio_exp
+            run_path = os.path.join(exp_path, f"rttratio={rttratio}:multiplier={multiplier}")
+            cfg["topo"]["sender_groups"][0]["delay"] = DELAY
+            cfg["topo"]["sender_groups"][1]["delay"] = DELAY * rttratio
+            os.makedirs(run_path, exist_ok=True)
+            cfg["data_dir"] = run_path
+            cfg_list.append(cfg)
 
     return cfg_list
 
@@ -167,10 +184,14 @@ def run_config_list(cfg_list):
 
 def main(args):
     os.makedirs(args.output, exist_ok=True)
-    parking_lot_cfg_list = parking_lot_config_list(args)
-    run_config_list(parking_lot_cfg_list)
-    # different_rtt_cfg_list = different_rtt_config_list(args)
-    # run_config_list(different_rtt_cfg_list)
+    if args.experiment_type == "parking_lot":
+        parking_lot_cfg_list = parking_lot_config_list(args)
+        run_config_list(parking_lot_cfg_list)
+    elif args.experiment_type == "different_rtt":
+        different_rtt_cfg_list = different_rtt_config_list(args)
+        run_config_list(different_rtt_cfg_list)
+    else:
+        raise ValueError(f"Unknown experiment type: {args.experiment_type}")
 
 
 if __name__ == "__main__":
@@ -179,5 +200,9 @@ if __name__ == "__main__":
         '-o', '--output', required=True,
         type=str, action='store',
         help='Output directory')
+    parser.add_argument(
+        '-e', '--experiment-type', required=True,
+        type=str, action='store',
+        help='Experiment type')
     args = parser.parse_args()
     main(args)
