@@ -1,0 +1,17 @@
+{
+  "data_dir": "./data/",
+  "filters": [
+    {
+      "regex": ".*ack",
+      "enabled": false
+    },
+    {
+      "regex": ".*send",
+      "enabled": false
+    },
+    {
+      "regex": ".*",
+      "enabled": true
+    }
+  ]
+}

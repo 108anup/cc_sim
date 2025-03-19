@@ -1,9 +1,9 @@
 {
-    "data_dir": "./data/",
-    "filters": [
-        {
-            "regex": ".*",
-            "enabled": true
-        }
-    ]
+  "data_dir": "./data/",
+  "filters": [
+    {
+      "regex": ".*",
+      "enabled": true
+    }
+  ]
 }

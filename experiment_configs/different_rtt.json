@@ -48,6 +48,6 @@
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config.json",
+  "metrics_config_file": "metrics_config_light.json",
   "data_dir": "tmp/different_rtt"
 }

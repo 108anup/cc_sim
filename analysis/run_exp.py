@@ -53,7 +53,7 @@ parking_lot_jstring = '''{
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config.json"
+  "metrics_config_file": "metrics_config_light.json"
 }'''
 
 different_rtt_jstring = '''{
@@ -106,7 +106,7 @@ different_rtt_jstring = '''{
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config.json",
+  "metrics_config_file": "metrics_config_light.json",
   "data_dir": "data"
 }'''
 
@@ -138,14 +138,14 @@ def different_rtt_config_list(args):
     _cfg = json.loads(different_rtt_jstring)
     _cfg["metrics_config_file"] = METRICS_CONFIG_FILE
     for multiplier_exp in range(-3, 10):
-        cfg = copy.deepcopy(_cfg)
         multiplier = 2 ** multiplier_exp
         pdict = {
             "p_probe_multiplier": multiplier,
             "p_ub_rtterr": DELAY,
         }
-        set_cc_config(_cfg, pdict)
         for rttratio_exp in range(1, 9):
+            set_cc_config(_cfg, pdict)
+            cfg = copy.deepcopy(_cfg)
             rttratio = 1 << rttratio_exp
             run_path = os.path.join(exp_path, f"rttratio={rttratio}:multiplier={multiplier}")
             cfg["topo"]["sender_groups"][0]["delay"] = DELAY

@@ -4,6 +4,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use regex::Regex;
 
 pub trait Metric {
     fn enable(&self) -> bool;
@@ -33,7 +34,7 @@ impl Metric for CsvMetric {
     }
 
     fn export(&self, dpath: &String) -> Result<(), Box<dyn Error>> {
-        if self.enable == false || self.rows.len() == 0 {
+        if !self.enable || self.rows.is_empty() {
             return Ok(());
         }
 
@@ -63,7 +64,9 @@ impl CsvMetric {
     }
 
     pub fn log(&mut self, row: Vec<String>) {
-        self.rows.push(row);
+        if self.enable {
+            self.rows.push(row);
+        }
     }
 
     pub fn get_row_count(&self) -> usize {
@@ -153,15 +156,26 @@ impl MetricRegistry {
         }
     }
 
+    fn is_enabled(&self, name: &str) -> bool {
+        for filter in &self.config.filters {
+            let r = Regex::new(&filter.regex).unwrap();
+            if r.is_match(name) {
+                return filter.enabled;
+            }
+        }
+        false
+    }
+
     pub fn register_csv_metric(
         &mut self,
         passed_name: &str,
         columns: Vec<String>,
     ) -> Option<Rc<RefCell<CsvMetric>>> {
-        // TODO: check if it should be enabled based on config
         let name: String = passed_name.to_string();
+        let enable = self.is_enabled(&name);
+
         if !self.csv_metrics.contains_key(&name) {
-            let csv_metric = Rc::new(RefCell::new(CsvMetric::new(name.clone(), true, columns)));
+            let csv_metric = Rc::new(RefCell::new(CsvMetric::new(name.clone(), enable, columns)));
             self.csv_metrics.insert(name.clone(), csv_metric);
         }
         let csv_metric = self.csv_metrics.get(&name).unwrap();
