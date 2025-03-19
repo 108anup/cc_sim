@@ -27,7 +27,7 @@
     "sender_groups": [
       {
         "num_senders": 1,
-        "delay": 100000,
+        "delay": 10000,
         "agg_intersend": {
           "Const": 0
         },
@@ -37,7 +37,7 @@
       },
       {
         "num_senders": 1,
-        "delay": 1000000,
+        "delay": 100000,
         "agg_intersend": {
           "Const": 0
         },

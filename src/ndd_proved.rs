@@ -146,7 +146,11 @@ impl CsvMetricStruct for SendRecord {}
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(default)]
 pub struct NDDParams {
-    rng_seed: u64,
+    p_rng_seed: u64,
+
+    f_wait_rtt_after_probe: bool,
+    f_deterministic_slot_idx: bool,
+
     p_cwnd_averaging_factor: f64,
     p_cwnd_clamp_high: f64,
     p_cwnd_clamp_low: f64,
@@ -165,7 +169,11 @@ pub struct NDDParams {
 impl Default for NDDParams {
     fn default() -> Self {
         NDDParams {
-            rng_seed: 42,
+            p_rng_seed: 42,
+
+            f_wait_rtt_after_probe: true,
+            f_deterministic_slot_idx: false,
+
             p_cwnd_averaging_factor: 1.,
             p_cwnd_clamp_high: 1.3,
             p_cwnd_clamp_low: 1.3,
@@ -880,6 +888,7 @@ impl NDDProved {
         if !last_record.probe_ongoing {
             self.s_round_max_cruise_rate =
                 float_max(self.s_round_max_cruise_rate, self.s_latest_cruise_rate);
+            // println!("update {}: {}", self.name, self.s_round_max_cruise_rate);
         }
     }
 
@@ -955,6 +964,7 @@ impl NDDProved {
         self.s_round_communicated_flow_count = f64::max_value(); // self.p_ub_flow_count as f64; // min
 
         self.s_round_max_cruise_rate = 0.; // max
+        // println!("reset {}: {}", self.name, self.s_round_max_cruise_rate);
         self.s_round_cruise_records.clear();
         self.s_round_probed = false;
         self.s_round_probe_slot_idx = 1 + self.s_rng.gen_range(0, self.p_slots_per_round);
@@ -1021,8 +1031,8 @@ impl NDDProved {
     pub fn new(p: &NDDParams) -> Self {
         Self {
             name: "".to_string(),
-            s_rng: StdRng::seed_from_u64(p.rng_seed),
-            p_rng_seed: p.rng_seed,
+            s_rng: StdRng::seed_from_u64(p.p_rng_seed),
+            p_rng_seed: p.p_rng_seed,
 
             m_registery: None,
             m_slot: None,
@@ -1032,8 +1042,8 @@ impl NDDProved {
             m_send: None,
             m_cwnd_event: None,
 
-            f_wait_rtt_after_probe: true,
-            f_deterministic_slot_idx: false,
+            f_wait_rtt_after_probe: p.f_wait_rtt_after_probe,
+            f_deterministic_slot_idx: p.f_deterministic_slot_idx,
 
             p_cwnd_averaging_factor: p.p_cwnd_averaging_factor,
             p_cwnd_clamp_high: p.p_cwnd_clamp_high,
