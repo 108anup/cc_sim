@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 300000000,
+  "sim_dur": 2000000000,
   "log": {
     "out_terminal": "png",
     "out_file": "different_rtt.png",
@@ -29,7 +29,7 @@
         "num_senders": 1,
         "delay": 10000,
         "link": {
-          "Const": 10500000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0
@@ -38,7 +38,7 @@
           "NDDProved": {
             "p_slots_per_round": 10,
             "p_ub_rtprop": 100000,
-            "p_probe_duration": 300000
+            "p_probe_duration": 1000000
           }
         },
         "start_time": 0,
@@ -46,9 +46,9 @@
       },
       {
         "num_senders": 1,
-        "delay": 10000,
+        "delay": 100000,
         "link": {
-          "Const": 10500000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0
@@ -57,7 +57,7 @@
           "NDDProved": {
             "p_slots_per_round": 10,
             "p_ub_rtprop": 100000,
-            "p_probe_duration": 300000
+            "p_probe_duration": 1000000
           }
         },
         "start_time": 0,
@@ -67,5 +67,5 @@
   },
   "random_seed": 0,
   "metrics_config_file": "metrics_config.json",
-  "data_dir": "tmp/debug"
+  "data_dir": "tmp/bw_estimate_analysis/debug"
 }
