@@ -10,7 +10,7 @@ SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 REPO_PATH = os.path.dirname(SCRIPT_PATH)
 SIM_PATH = os.path.join(REPO_PATH, "target/release/cc_sim")
 OUT_PATH = os.path.join(REPO_PATH, "outputs")
-METRICS_CONFIG_FILE = os.path.join(REPO_PATH, "metrics_config.json")
+METRICS_CONFIG_FILE = os.path.join(REPO_PATH, "metrics_config_light.json")
 
 
 parking_lot_jstring = '''{
@@ -53,7 +53,6 @@ parking_lot_jstring = '''{
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config_light.json"
 }'''
 
 different_rtt_jstring = '''{
@@ -79,7 +78,7 @@ different_rtt_jstring = '''{
   "topo": {
     "topo_type": "Dumbbell",
     "link": {
-      "Const": 1500000
+      "Const": 150000000
     },
     "bufsize": "Infinite",
     "sender_groups": [
@@ -105,9 +104,7 @@ different_rtt_jstring = '''{
       }
     ]
   },
-  "random_seed": 0,
-  "metrics_config_file": "metrics_config_light.json",
-  "data_dir": "data"
+  "random_seed": 0
 }'''
 
 
@@ -137,7 +134,8 @@ def different_rtt_config_list(args):
     cfg_list = []
     _cfg = json.loads(different_rtt_jstring)
     _cfg["metrics_config_file"] = METRICS_CONFIG_FILE
-    for multiplier_exp in range(-3, 10):
+    # for multiplier_exp in range(-3, 10):
+    for multiplier_exp in [-3]:
         multiplier = 2 ** multiplier_exp
         pdict = {
             "p_probe_multiplier": multiplier,
@@ -175,7 +173,8 @@ def parking_lot_config_list(args):
 
 
 def run_config_list(cfg_list):
-    pool = mp.Pool(mp.cpu_count())
+    # pool = mp.Pool(mp.cpu_count())
+    pool = mp.Pool(24)
     for cfg in cfg_list:
         pool.apply_async(run, (cfg, ))
     pool.close()
