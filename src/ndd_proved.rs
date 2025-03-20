@@ -987,7 +987,7 @@ impl NDDProved {
 
     fn should_start_probe(&mut self) -> bool {
         if !self.f_deterministic_slot_idx {
-            self.s_round_probe_slot_idx >= self.s_round_slots_till_now
+            self.s_round_slots_till_now >= self.s_round_probe_slot_idx
         } else {
             // deterministic probes that do not collide
 
