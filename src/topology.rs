@@ -221,7 +221,8 @@ fn create_dumbbell_topology<'a>(
             // Decide everybody's ids
             let tcp_sender_id = router_id + 1 + objs_to_reg.len();
             let delay_id = tcp_sender_id + 1;
-            let agg_id = delay_id + 1;
+            let this_link_id = delay_id + 1;
+            let agg_id = this_link_id + 1;
             let acker_id = agg_id + 1;
 
             let acker_addr = sched.next_addr();
@@ -243,7 +244,11 @@ fn create_dumbbell_topology<'a>(
                 &tracer,
                 config,
             );
-            let delay = Delay::new(group_config.delay, link_id);
+            let delay = Delay::new(group_config.delay, this_link_id);
+
+            // Create the link (sits before the bottleneck link)
+            let this_link_trace = LinkTrace::from_config(&group_config.link, config)?;
+            let this_link = Link::new(this_link_trace, BufferSize::Infinite, link_id, &tracer, &config);
 
             // Create the acker
             let acker = Acker::new(acker_addr, agg_id);
@@ -257,6 +262,7 @@ fn create_dumbbell_topology<'a>(
 
             objs_to_reg.push(Box::new(tcp_sender));
             objs_to_reg.push(Box::new(delay));
+            objs_to_reg.push(Box::new(this_link));
             objs_to_reg.push(Box::new(aggregator));
             objs_to_reg.push(Box::new(acker));
         }

@@ -71,6 +71,7 @@ fn main() -> Result<(), Error> {
             sender_groups.push(SenderGroupConfig {
                 num_senders: 1,
                 delay: Time::from_millis(10),
+                link: _c_link_trace.clone(),
                 agg_intersend: random::RandomVariable::Const(0.),
                 cc: _stable_linear_cc_config.clone(),
                 start_time: Time::from_secs(i * 10),

@@ -28,13 +28,17 @@
       {
         "num_senders": 1,
         "delay": 10000,
+        "link": {
+          "Const": 10500000
+        },
         "agg_intersend": {
           "Const": 0
         },
         "cc": {
           "NDDProved": {
             "p_slots_per_round": 10,
-            "p_ub_rtprop": 100000
+            "p_ub_rtprop": 100000,
+            "p_probe_duration": 300000
           }
         },
         "start_time": 0,
@@ -43,13 +47,17 @@
       {
         "num_senders": 1,
         "delay": 10000,
+        "link": {
+          "Const": 10500000
+        },
         "agg_intersend": {
           "Const": 0
         },
         "cc": {
           "NDDProved": {
             "p_slots_per_round": 10,
-            "p_ub_rtprop": 100000
+            "p_ub_rtprop": 100000,
+            "p_probe_duration": 300000
           }
         },
         "start_time": 0,
