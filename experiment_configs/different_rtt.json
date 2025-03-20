@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 1000000000,
+  "sim_dur": 300000000,
   "log": {
     "out_terminal": "png",
     "out_file": "different_rtt.png",
@@ -21,33 +21,43 @@
   "topo": {
     "topo_type": "Dumbbell",
     "link": {
-      "Const": 1500000
+      "Const": 15000000
     },
     "bufsize": "Infinite",
     "sender_groups": [
       {
         "num_senders": 1,
-        "delay": 1000,
+        "delay": 10000,
         "agg_intersend": {
           "Const": 0
         },
-        "cc": {"NDDProved": {}},
+        "cc": {
+          "NDDProved": {
+            "p_slots_per_round": 10,
+            "p_ub_rtprop": 100000
+          }
+        },
         "start_time": 0,
         "tx_length": "Infinite"
       },
       {
         "num_senders": 1,
-        "delay": 100000,
+        "delay": 10000,
         "agg_intersend": {
           "Const": 0
         },
-        "cc": {"NDDProved": {}},
+        "cc": {
+          "NDDProved": {
+            "p_slots_per_round": 10,
+            "p_ub_rtprop": 100000
+          }
+        },
         "start_time": 0,
         "tx_length": "Infinite"
       }
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config_light.json",
-  "data_dir": "tmp/different_rtt"
+  "metrics_config_file": "metrics_config.json",
+  "data_dir": "tmp/debug"
 }

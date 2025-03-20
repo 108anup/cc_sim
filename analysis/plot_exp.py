@@ -74,6 +74,17 @@ def plot_multi_exp(
     return records
 
 
+def get_steady_state_throughput(df: pd.DataFrame):
+    # We look at the last 30% of the trace
+    start = int(0.7 * (len(df)-1))
+    end = len(df)-1
+    start_rx = df.iloc[start]["end_tot_rx"]
+    start_time = df.iloc[start]["end_time"]
+    end_rx = df.iloc[end]["end_tot_rx"]
+    end_time = df.iloc[end]["end_time"]
+    return (end_rx - start_rx) / (end_time - start_time)
+
+
 def plot_single_exp(input_dir: str, files: List[str]):
     params = parse_params(os.path.basename(input_dir))
     cruise_dfs = {}
@@ -87,8 +98,9 @@ def plot_single_exp(input_dir: str, files: List[str]):
     record = {}
     for flow_id, df in cruise_dfs.items():
         ax.step(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
-        mean_ack_rate = df["ack_rate"].mean()
-        record[flow_id] = mean_ack_rate
+        ss_ack_rate = get_steady_state_throughput(df)
+        # mean_ack_rate = df["ack_rate"].mean()
+        record[flow_id] = ss_ack_rate
 
     record["max_ack_rate"] = max(record.values())
     record["min_ack_rate"] = min(record.values())

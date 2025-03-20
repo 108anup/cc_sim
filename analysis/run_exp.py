@@ -138,6 +138,8 @@ def different_rtt_config_list(args):
     for multiplier_exp in [-3]:
         multiplier = 2 ** multiplier_exp
         pdict = {
+            "p_probe_duration": 300000,
+            "p_slots_per_round": 10,
             "p_probe_multiplier": multiplier,
             "p_ub_rtterr": DELAY,
         }

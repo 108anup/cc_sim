@@ -294,7 +294,7 @@ impl Display for NDDProved {
         writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_qdel)?;
         writeln!(f, "p_slots_per_round: {}", self.p_slots_per_round)?;
         writeln!(f, "p_ub_flow_count: {}", self.p_ub_flow_count)?;
-        writeln!(f, "p_ub_jitter: {}", self.p_ub_rtterr)?;
+        writeln!(f, "p_ub_rtterr: {}", self.p_ub_rtterr)?;
         writeln!(f, "p_ub_rtprop: {}", self.p_ub_rtprop)?;
         writeln!(f, "p_lb_cwnd: {}", self.p_lb_cwnd_pkts)?;
         writeln!(f, "p_lb_intersend_time: {}", self.p_lb_intersend_time)?;
@@ -494,7 +494,7 @@ impl NDDProved {
 
         let should_init_ss_end =
             rtt > (self.s_min_rtprop + self.p_contract_min_qdel + self.p_ub_rtterr);
-        let ss_ended = self.s_ss_last_seq > 0 && last_recv_seq > self.s_ss_last_seq;
+        let ss_ended = self.s_ss_last_seq > 0 && last_recv_seq >= self.s_ss_last_seq;
 
         if !self.s_ss_end_initiated {
             if !should_init_ss_end {
@@ -506,8 +506,11 @@ impl NDDProved {
                 self.log_cwnd_event(now, CwndEvent::SlowStartEnd);
                 self.s_ss_end_initiated = true;
                 self.s_ss_last_seq = last_snd_seq;
+                // This is the last seq to experience high RTT, we need to ignore the RTT of this
+                // seq when computing round min RTT.
             }
         } else {
+            #[allow(clippy::collapsible_if)]
             if ss_ended {
                 self.s_ss_done = true;
                 self.reset_round_state();
@@ -605,7 +608,7 @@ impl NDDProved {
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
         let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
-        self.s_probe_initiated_end && last_recv_seq > self.s_probe_last_seq.unwrap()
+        self.s_probe_initiated_end && last_recv_seq >= self.s_probe_last_seq.unwrap()
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
@@ -746,21 +749,24 @@ impl NDDProved {
         let last_snd_seq = self.s_tot_tx;
 
         if self.s_probe_inflightmatch_seq.is_none() {
-            if last_recv_seq > self.s_probe_start_seq.unwrap() {
-                self.s_probe_inflightmatch_seq = Some(last_snd_seq);
+            if last_recv_seq >= self.s_probe_start_seq.unwrap() {
+                self.s_probe_inflightmatch_seq = Some(last_snd_seq+1);
                 if !self.f_wait_rtt_after_probe {
-                    self.s_probe_first_seq = Some(last_snd_seq);
+                    self.s_probe_first_seq = Some(last_snd_seq+1);
                     self.s_probe_start_time = Some(now);
                 }
             }
         } else if self.s_probe_first_seq.is_none() {
-            if last_recv_seq > self.s_probe_inflightmatch_seq.unwrap() {
-                self.s_probe_first_seq = Some(last_snd_seq);
+            if last_recv_seq >= self.s_probe_inflightmatch_seq.unwrap() {
+                self.s_probe_first_seq = Some(last_snd_seq+1);
                 self.s_probe_start_time = Some(now);
             }
         } else if self.s_probe_last_seq.is_none() {
+            #[allow(clippy::collapsible_if)]
             if now > self.s_probe_start_time.unwrap() + self.p_probe_duration {
-                self.s_probe_last_seq = Some(last_snd_seq);
+                self.s_probe_last_seq =
+                    Some(std::cmp::max(self.s_probe_first_seq.unwrap(), last_snd_seq));
+                // The max ensures there is at least one packet in [first, last]
             }
         }
     }
@@ -773,7 +779,7 @@ impl NDDProved {
         self.s_probe_cwnd_before = self.s_cwnd;
         self.s_probe_min_qdel_before = self.s_slot_min_qdel.unwrap();
         self.s_probe_min_qdel_during = None;
-        self.s_probe_start_seq = Some(self.s_tot_tx);
+        self.s_probe_start_seq = Some(self.s_tot_tx+1);
         self.s_probe_inflightmatch_seq = None;
         self.s_probe_first_seq = None;
         self.s_probe_last_seq = None;
