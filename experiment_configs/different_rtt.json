@@ -29,7 +29,7 @@
         "num_senders": 1,
         "delay": 10000,
         "link": {
-          "Const": 9000000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0
@@ -46,9 +46,9 @@
       },
       {
         "num_senders": 1,
-        "delay": 10000,
+        "delay": 100000,
         "link": {
-          "Const": 9000000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0

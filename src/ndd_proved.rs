@@ -238,6 +238,7 @@ pub struct NDDProved {
     s_tot_tx: u64,
     s_tot_rx: u64,
     s_tot_ld: u64,
+    s_latest_rtt: Time,
     // ? I don't think CCAC formulation allowed false positives in loss
     // detection. So this might not work correctly.
 
@@ -370,6 +371,7 @@ impl CongestionControl for NDDProved {
     fn on_ack(&mut self, now: Time, cum_ack: SeqNum, ack_uid: PktId, rtt: Time, num_lost: u64) {
         self.s_tot_rx += 1;
         self.s_tot_ld += num_lost;
+        self.s_latest_rtt = rtt;
 
         self.log_ack_metric(now, cum_ack, rtt);
 
@@ -457,8 +459,13 @@ impl CongestionControl for NDDProved {
         } else {
             std::cmp::max(
                 self.p_lb_intersend_time,
-                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+                Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
             )
+            // std::cmp::max(
+            //     self.p_lb_intersend_time,
+            //     Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            // )
+            // self.p_lb_intersend_time
         }
     }
 
@@ -1071,6 +1078,7 @@ impl NDDProved {
             s_tot_tx: 0,
             s_tot_rx: 0,
             s_tot_ld: 0,
+            s_latest_rtt: Time::from_micros(0),
 
             s_ss_done: false,
             s_ss_end_initiated: false,
