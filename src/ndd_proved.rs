@@ -967,10 +967,27 @@ impl NDDProved {
         // ? We want queueing delay measurement, so that all flows have roughly
         // similar slot sizes. Currently taken max queueing delay of latest
         // slot.
-        let mut slot_duration =
-            self.p_probe_duration + self.p_ub_rtprop * 3 + self.s_slot_max_qdel * 3;
-        // ^^ Roughly 2 rtts + probe duration. max_rtprop + max_qdel is ub on
-        // rtt.
+        let mut max_rtprop = self.p_ub_rtprop;
+        if self.f_slot_greater_than_rtprop {
+            max_rtprop = std::cmp::max(max_rtprop, self.s_min_rtprop);
+        }
+
+        let max_rtt = max_rtprop + self.s_slot_max_qdel;
+        let mut probe_duration = self.p_probe_duration;
+        if self.f_probe_duration_max_rtt {
+            probe_duration = max_rtt;
+        }
+
+        let mut slot_duration = probe_duration + max_rtt + self.s_slot_max_qdel;
+        if self.f_wait_rtt_after_probe {
+            slot_duration = slot_duration + max_rtt;
+        }
+        if self.f_probe_wait_in_max_rtts {
+            slot_duration = std::cmp::max(
+                slot_duration,
+                probe_duration + max_rtt * self.p_probe_wait_rtts + self.s_slot_max_qdel,
+            );
+        }
 
         now >= self.s_slot_start_time + slot_duration
     }
