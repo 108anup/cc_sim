@@ -28,15 +28,23 @@
       {
         "num_senders": 2,
         "delay": 10000,
+        "link": {
+          "Const": 15000000
+        },
         "agg_intersend": {
           "Const": 0
         },
-        "cc": "NDDProved",
+        "cc": {
+          "NDDProved": {
+            "f_deterministic_slot_idx": true
+          }
+        },
         "start_time": 0,
         "tx_length": "Infinite"
       }
     ]
   },
   "random_seed": 0,
-  "metrics_config_file": "metrics_config.json"
+  "metrics_config_file": "metrics_config.json",
+  "data_dir": "tmp/tmp"
 }

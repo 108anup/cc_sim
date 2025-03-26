@@ -189,7 +189,7 @@ impl Default for NDDParams {
             p_probe_multiplier: 4.,
             p_probe_duration: Time::from_millis(10),
             p_contract_min_qdel: Time::from_millis(10),
-            p_slots_per_round: 30,
+            p_slots_per_round: 10,
             p_probe_wait_rtts: 2,
 
             p_ub_flow_count: 10,
@@ -792,6 +792,8 @@ impl NDDProved {
 
         if self.s_probe_first_seq.is_none() {
             if now <= wait_until {
+                self.s_probe_inflightmatch_seq = Some(last_snd_seq+1);  // Unused, just for
+                // logging.
                 self.s_probe_first_seq = Some(last_snd_seq+1);
                 self.s_probe_first_time = Some(now);
             }
