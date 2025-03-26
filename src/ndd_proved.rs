@@ -471,14 +471,14 @@ impl CongestionControl for NDDProved {
         if self.s_min_rtprop.micros() == u64::MAX {
             self.p_lb_intersend_time
         } else {
-            std::cmp::max(
-                self.p_lb_intersend_time,
-                Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-            )
             // std::cmp::max(
             //     self.p_lb_intersend_time,
-            //     Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
             // )
+            std::cmp::max(
+                self.p_lb_intersend_time,
+                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            )
             // self.p_lb_intersend_time
         }
     }
@@ -766,56 +766,18 @@ impl NDDProved {
             return;
         }
 
-        if self.f_probe_wait_in_max_rtts {
-            self.update_probe_state_max_rtts(now);
-        } else {
-            self.update_probe_state_rtts(now);
-        }
-    }
+        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
+        let last_snd_seq = self.s_tot_tx;
 
-    fn update_probe_state_max_rtts(&mut self, now: Time) {
         let max_rtprop = std::cmp::max(self.s_min_rtprop, self.p_ub_rtprop);
         let max_rtt = max_rtprop + self.s_slot_max_qdel;
+        let mut probe_duration = self.p_probe_duration;
+        if self.f_probe_duration_max_rtt {
+            probe_duration = max_rtt;
+        }
+
         let wait_time = max_rtt * self.p_probe_wait_rtts;
         let wait_until = self.s_probe_start_time.unwrap() + wait_time;
-
-        // TODO: add asserts that packet timed RTTs have elapsed
-        assert!(self.p_probe_wait_rtts >= 2);
-
-        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
-        let last_snd_seq = self.s_tot_tx;
-
-        let mut probe_duration = self.p_probe_duration;
-        if self.f_probe_duration_max_rtt {
-            probe_duration = max_rtt;
-        }
-
-        if self.s_probe_first_seq.is_none() {
-            if now <= wait_until {
-                self.s_probe_inflightmatch_seq = Some(last_snd_seq+1);  // Unused, just for
-                // logging.
-                self.s_probe_first_seq = Some(last_snd_seq+1);
-                self.s_probe_first_time = Some(now);
-            }
-        } else if self.s_probe_last_seq.is_none() {
-            #[allow(clippy::collapsible_if)]
-            if now > self.s_probe_first_time.unwrap() + probe_duration {
-                self.s_probe_last_seq =
-                    Some(std::cmp::max(self.s_probe_first_seq.unwrap(), last_snd_seq));
-            }
-        }
-    }
-
-    fn update_probe_state_rtts(&mut self, now: Time) {
-        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
-        let last_snd_seq = self.s_tot_tx;
-
-        let max_rtprop = std::cmp::max(self.s_min_rtprop, self.p_ub_rtprop);
-        let max_rtt = max_rtprop + self.s_slot_max_qdel;
-        let mut probe_duration = self.p_probe_duration;
-        if self.f_probe_duration_max_rtt {
-            probe_duration = max_rtt;
-        }
 
         if self.s_probe_inflightmatch_seq.is_none() {
             if last_recv_seq >= self.s_probe_start_seq.unwrap() {
@@ -827,8 +789,11 @@ impl NDDProved {
             }
         } else if self.s_probe_first_seq.is_none() {
             if last_recv_seq >= self.s_probe_inflightmatch_seq.unwrap() {
-                self.s_probe_first_seq = Some(last_snd_seq+1);
-                self.s_probe_first_time = Some(now);
+                #[allow(clippy::collapsible_if)]
+                if !self.f_probe_wait_in_max_rtts || now >= wait_until {
+                    self.s_probe_first_seq = Some(last_snd_seq+1);
+                    self.s_probe_first_time = Some(now);
+                }
             }
         } else if self.s_probe_last_seq.is_none() {
             #[allow(clippy::collapsible_if)]
