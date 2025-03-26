@@ -150,6 +150,10 @@ pub struct NDDParams {
 
     f_wait_rtt_after_probe: bool,
     f_deterministic_slot_idx: bool,
+    f_probe_wait_in_max_rtts: bool,
+    f_probe_duration_max_rtt: bool,
+    f_drain_over_rtt: bool,
+    f_slot_greater_than_rtprop: bool,
 
     p_cwnd_averaging_factor: f64,
     p_cwnd_clamp_high: f64,
@@ -158,6 +162,7 @@ pub struct NDDParams {
     p_probe_duration: Time,
     p_contract_min_qdel: Time,
     p_slots_per_round: u64,
+    p_probe_wait_rtts: u64,
 
     p_ub_flow_count: u64,
     p_ub_rtterr: Time,
@@ -173,6 +178,10 @@ impl Default for NDDParams {
 
             f_wait_rtt_after_probe: true,
             f_deterministic_slot_idx: false,
+            f_probe_wait_in_max_rtts: true,
+            f_probe_duration_max_rtt: true,
+            f_drain_over_rtt: true,
+            f_slot_greater_than_rtprop: true,
 
             p_cwnd_averaging_factor: 1.,
             p_cwnd_clamp_high: 1.3,
@@ -181,6 +190,7 @@ impl Default for NDDParams {
             p_probe_duration: Time::from_millis(10),
             p_contract_min_qdel: Time::from_millis(10),
             p_slots_per_round: 30,
+            p_probe_wait_rtts: 2,
 
             p_ub_flow_count: 10,
             p_ub_rtterr: Time::from_millis(10),
@@ -210,6 +220,10 @@ pub struct NDDProved {
     // FEATURES
     f_wait_rtt_after_probe: bool,
     f_deterministic_slot_idx: bool,
+    f_probe_wait_in_max_rtts: bool,
+    f_probe_duration_max_rtt: bool,
+    f_drain_over_rtt: bool,
+    f_slot_greater_than_rtprop: bool,
 
     // -------------------------------------------------------------------------
     // PARAMETERS
@@ -221,6 +235,7 @@ pub struct NDDProved {
     p_probe_duration: Time,       // This can really be anything
     p_contract_min_qdel: Time,
     p_slots_per_round: u64,
+    p_probe_wait_rtts: u64,
 
     // Prior belief of network parameters (upper (ub) and lower (lb) bounds)
     p_ub_flow_count: u64,
@@ -267,6 +282,7 @@ pub struct NDDProved {
     // than the slot duration)
     s_probe_ongoing: bool,
     s_probe_initiated_end: bool,
+    s_probe_first_time: Option<Time>,
     s_probe_start_time: Option<Time>,
     s_probe_cwnd_before: f64,
     s_probe_min_qdel_before: Time,
@@ -381,10 +397,8 @@ impl CongestionControl for NDDProved {
         // ? split into measurement updates and cwnd action?
         self.check_update_cruise_state_and_rate(now, cum_ack);
         self.update_probe_delay_if_allowed(cum_ack, rtt);
-        if !self.s_probe_ongoing {
-            self.update_communicated_flow_count(now, rtt);
-            self.update_slot_state(now, rtt);
-        }
+        self.update_communicated_flow_count(now, rtt);
+        self.update_slot_state(now, rtt);
         self.update_probe_state(now);
 
         // ? We from from old state to next state. Since it is multi-variable,
@@ -752,25 +766,71 @@ impl NDDProved {
             return;
         }
 
+        if self.f_probe_wait_in_max_rtts {
+            self.update_probe_state_max_rtts(now);
+        } else {
+            self.update_probe_state_rtts(now);
+        }
+    }
+
+    fn update_probe_state_max_rtts(&mut self, now: Time) {
+        let max_rtprop = std::cmp::max(self.s_min_rtprop, self.p_ub_rtprop);
+        let max_rtt = max_rtprop + self.s_slot_max_qdel;
+        let wait_time = max_rtt * self.p_probe_wait_rtts;
+        let wait_until = self.s_probe_start_time.unwrap() + wait_time;
+
+        // TODO: add asserts that packet timed RTTs have elapsed
+        assert!(self.p_probe_wait_rtts >= 2);
+
         let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
         let last_snd_seq = self.s_tot_tx;
+
+        let mut probe_duration = self.p_probe_duration;
+        if self.f_probe_duration_max_rtt {
+            probe_duration = max_rtt;
+        }
+
+        if self.s_probe_first_seq.is_none() {
+            if now <= wait_until {
+                self.s_probe_first_seq = Some(last_snd_seq+1);
+                self.s_probe_first_time = Some(now);
+            }
+        } else if self.s_probe_last_seq.is_none() {
+            #[allow(clippy::collapsible_if)]
+            if now > self.s_probe_first_time.unwrap() + probe_duration {
+                self.s_probe_last_seq =
+                    Some(std::cmp::max(self.s_probe_first_seq.unwrap(), last_snd_seq));
+            }
+        }
+    }
+
+    fn update_probe_state_rtts(&mut self, now: Time) {
+        let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
+        let last_snd_seq = self.s_tot_tx;
+
+        let max_rtprop = std::cmp::max(self.s_min_rtprop, self.p_ub_rtprop);
+        let max_rtt = max_rtprop + self.s_slot_max_qdel;
+        let mut probe_duration = self.p_probe_duration;
+        if self.f_probe_duration_max_rtt {
+            probe_duration = max_rtt;
+        }
 
         if self.s_probe_inflightmatch_seq.is_none() {
             if last_recv_seq >= self.s_probe_start_seq.unwrap() {
                 self.s_probe_inflightmatch_seq = Some(last_snd_seq+1);
                 if !self.f_wait_rtt_after_probe {
                     self.s_probe_first_seq = Some(last_snd_seq+1);
-                    self.s_probe_start_time = Some(now);
+                    self.s_probe_first_time = Some(now);
                 }
             }
         } else if self.s_probe_first_seq.is_none() {
             if last_recv_seq >= self.s_probe_inflightmatch_seq.unwrap() {
                 self.s_probe_first_seq = Some(last_snd_seq+1);
-                self.s_probe_start_time = Some(now);
+                self.s_probe_first_time = Some(now);
             }
         } else if self.s_probe_last_seq.is_none() {
             #[allow(clippy::collapsible_if)]
-            if now > self.s_probe_start_time.unwrap() + self.p_probe_duration {
+            if now > self.s_probe_first_time.unwrap() + probe_duration {
                 self.s_probe_last_seq =
                     Some(std::cmp::max(self.s_probe_first_seq.unwrap(), last_snd_seq));
                 // The max ensures there is at least one packet in [first, last]
@@ -782,7 +842,8 @@ impl NDDProved {
         self.reset_probe_state();
         self.s_probe_ongoing = true;
         self.s_probe_initiated_end = false;
-        self.s_probe_start_time = None; // TODO: should this be now or the time we have transmitted the first seq of probe? I think first seq of probe being sent.
+        self.s_probe_first_time = None; // TODO: should this be now or the time we have transmitted the first seq of probe? I think first seq of probe being sent.
+        self.s_probe_start_time = Some(now);
         self.s_probe_cwnd_before = self.s_cwnd;
         self.s_probe_min_qdel_before = self.s_slot_min_qdel.unwrap();
         self.s_probe_min_qdel_during = None;
@@ -827,6 +888,7 @@ impl NDDProved {
     fn reset_probe_state(&mut self) {
         self.s_probe_ongoing = false;
         self.s_probe_initiated_end = false;
+        self.s_probe_first_time = None;
         self.s_probe_start_time = None;
         self.s_probe_cwnd_before = self.p_lb_cwnd_pkts;
         self.s_probe_min_qdel_before = Time::from_millis(0);
@@ -1057,6 +1119,10 @@ impl NDDProved {
 
             f_wait_rtt_after_probe: p.f_wait_rtt_after_probe,
             f_deterministic_slot_idx: p.f_deterministic_slot_idx,
+            f_probe_wait_in_max_rtts: p.f_probe_wait_in_max_rtts,
+            f_probe_duration_max_rtt: p.f_probe_duration_max_rtt,
+            f_drain_over_rtt: p.f_drain_over_rtt,
+            f_slot_greater_than_rtprop: p.f_slot_greater_than_rtprop,
 
             p_cwnd_averaging_factor: p.p_cwnd_averaging_factor,
             p_cwnd_clamp_high: p.p_cwnd_clamp_high,
@@ -1065,6 +1131,7 @@ impl NDDProved {
             p_probe_duration: p.p_probe_duration,
             p_contract_min_qdel: p.p_contract_min_qdel,
             p_slots_per_round: p.p_slots_per_round,
+            p_probe_wait_rtts: p.p_probe_wait_rtts,
 
             p_ub_flow_count: p.p_ub_flow_count,
             p_ub_rtterr: p.p_ub_rtterr,
@@ -1099,6 +1166,7 @@ impl NDDProved {
 
             s_probe_ongoing: false,
             s_probe_initiated_end: false,
+            s_probe_first_time: None,
             s_probe_start_time: None,
             s_probe_cwnd_before: p.p_lb_cwnd_pkts,
             s_probe_min_qdel_before: Time::from_millis(0),
