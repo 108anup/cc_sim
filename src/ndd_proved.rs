@@ -477,14 +477,14 @@ impl CongestionControl for NDDProved {
         if self.s_min_rtprop.micros() == u64::MAX {
             self.p_lb_intersend_time
         } else {
-            std::cmp::max(
-                self.p_lb_intersend_time,
-                Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-            )
             // std::cmp::max(
             //     self.p_lb_intersend_time,
-            //     Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
             // )
+            std::cmp::max(
+                self.p_lb_intersend_time,
+                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            )
             // self.p_lb_intersend_time
         }
     }
@@ -1003,14 +1003,19 @@ impl NDDProved {
             probe_duration = max_rtt;
         }
 
-        let mut slot_duration = probe_duration + max_rtt + self.s_slot_max_qdel;
+        let mut drain_duration = self.s_slot_max_qdel;
+        if self.f_drain_over_rtt {
+            drain_duration = max_rtt;
+        }
+
+        let mut slot_duration = probe_duration + max_rtt + drain_duration;
         if self.f_wait_rtt_after_probe {
             slot_duration = slot_duration + max_rtt;
         }
         if self.f_probe_wait_in_max_rtts {
             slot_duration = std::cmp::max(
                 slot_duration,
-                probe_duration + max_rtt * self.p_probe_wait_rtts + self.s_slot_max_qdel,
+                probe_duration + max_rtt * self.p_probe_wait_rtts + drain_duration,
             );
         }
 
