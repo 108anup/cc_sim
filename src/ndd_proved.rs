@@ -281,7 +281,7 @@ pub struct NDDProved {
     // Probe state (for the slot in which we probe, the probe may be smaller
     // than the slot duration)
     s_probe_ongoing: bool,
-    s_probe_initiated_end: bool,
+    s_probe_end_initiated: bool,
     s_probe_first_time: Option<Time>,
     s_probe_start_time: Option<Time>,
     s_probe_cwnd_before: f64,
@@ -292,6 +292,7 @@ pub struct NDDProved {
     s_probe_first_seq: Option<u64>,
     s_probe_last_seq: Option<u64>,
     s_probe_excess_amount: u64, // packets
+    s_probe_drain_amount: f64,
 }
 
 impl Display for NDDProved {
@@ -412,8 +413,13 @@ impl CongestionControl for NDDProved {
             return;
         }
 
-        if self.s_probe_ongoing && self.should_initiate_probe_end(now, rtt) {
-            self.initiate_probe_end(now);
+        if self.s_probe_ongoing {
+            if self.should_initiate_probe_end(now, rtt) {
+                self.initiate_probe_end(now);
+            }
+            else if self.s_probe_end_initiated {
+                self.update_cwnd_drain(now);
+            }
         }
 
         let probe_ended = self.s_probe_ongoing && self.should_end_probe(cum_ack);
@@ -471,14 +477,14 @@ impl CongestionControl for NDDProved {
         if self.s_min_rtprop.micros() == u64::MAX {
             self.p_lb_intersend_time
         } else {
-            // std::cmp::max(
-            //     self.p_lb_intersend_time,
-            //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-            // )
             std::cmp::max(
                 self.p_lb_intersend_time,
-                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+                Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
             )
+            // std::cmp::max(
+            //     self.p_lb_intersend_time,
+            //     Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+            // )
             // self.p_lb_intersend_time
         }
     }
@@ -622,14 +628,14 @@ impl NDDProved {
 
     fn should_initiate_probe_end(&self, now: Time, rtt: Time) -> bool {
         let last_snd_seq = self.s_tot_tx;
-        !self.s_probe_initiated_end
+        !self.s_probe_end_initiated
             && self.s_probe_last_seq.is_some()
             && last_snd_seq >= self.s_probe_last_seq.unwrap()
     }
 
     fn should_end_probe(&self, ack: SeqNum) -> bool {
         let last_recv_seq = self.s_tot_rx + self.s_tot_ld;
-        self.s_probe_initiated_end && last_recv_seq >= self.s_probe_last_seq.unwrap()
+        self.s_probe_end_initiated && last_recv_seq >= self.s_probe_last_seq.unwrap()
     }
 
     fn is_ack_part_of_excess_duration(&self, _ack: SeqNum) -> bool {
@@ -670,10 +676,27 @@ impl NDDProved {
         // The max ensures that even if probe duration is very small (if probe
         // rate too low), the probe contains at least 1 pkt which experiences
         // full delay.
-        self.s_cwnd = self.s_probe_cwnd_before;
-        self.s_probe_initiated_end = true;
+        self.s_probe_end_initiated = true;
         //self.s_probe_drain_last_seq =
         //    Some(self.s_probe_last_seq.unwrap() + (f64::ceil(self.s_cwnd) as u64));
+        if !self.f_drain_over_rtt {
+            self.s_cwnd = self.s_probe_cwnd_before;
+            self.log_cwnd_event(now, CwndEvent::ProbeDrain);
+        }
+        else {
+            self.s_probe_drain_amount = (self.s_cwnd - self.s_probe_cwnd_before)/self.s_cwnd;
+            self.update_cwnd_drain(now);
+        }
+    }
+
+    fn update_cwnd_drain(&mut self, now: Time) {
+        if !self.f_drain_over_rtt {
+            return;
+        }
+        self.s_cwnd = float_max(
+            self.s_probe_cwnd_before,
+            self.s_cwnd - self.s_probe_drain_amount,
+        );
         self.log_cwnd_event(now, CwndEvent::ProbeDrain);
     }
 
@@ -713,7 +736,7 @@ impl NDDProved {
     }
 
     fn update_cwnd_after_probe(&mut self, now: Time) {
-        let prev_cwnd = self.s_cwnd;
+        let prev_cwnd = self.s_probe_cwnd_before;
         let mut next_cwnd = self.p_cwnd_clamp_high * prev_cwnd;
         let mut log_bandwidth_estimate = None;
         let mut log_flow_count_estimate = None;
@@ -808,7 +831,7 @@ impl NDDProved {
     fn start_probe(&mut self, now: Time) {
         self.reset_probe_state();
         self.s_probe_ongoing = true;
-        self.s_probe_initiated_end = false;
+        self.s_probe_end_initiated = false;
         self.s_probe_first_time = None; // TODO: should this be now or the time we have transmitted the first seq of probe? I think first seq of probe being sent.
         self.s_probe_start_time = Some(now);
         self.s_probe_cwnd_before = self.s_cwnd;
@@ -830,6 +853,7 @@ impl NDDProved {
 
         self.s_cwnd = self.s_probe_cwnd_before + (self.s_probe_excess_amount as f64);
         self.log_cwnd_event(now, CwndEvent::ProbeGain);
+        self.s_probe_drain_amount = 0.;
 
         // self.s_probe_first_seq = Some(self.s_tot_tx + f64::ceil(self.s_cwnd) as u64);
         // The first seq is our estimation of when the inflight would have
@@ -854,7 +878,7 @@ impl NDDProved {
 
     fn reset_probe_state(&mut self) {
         self.s_probe_ongoing = false;
-        self.s_probe_initiated_end = false;
+        self.s_probe_end_initiated = false;
         self.s_probe_first_time = None;
         self.s_probe_start_time = None;
         self.s_probe_cwnd_before = self.p_lb_cwnd_pkts;
@@ -865,6 +889,7 @@ impl NDDProved {
         self.s_probe_last_seq = None;
         self.s_probe_min_qdel_during = None;
         self.s_probe_excess_amount = 0;
+        self.s_probe_drain_amount = 0.;
     }
 
     fn check_update_cruise_state_and_rate(&mut self, now: Time, ack: SeqNum) {
@@ -1149,7 +1174,7 @@ impl NDDProved {
             s_latest_cruise_rate: 0.,
 
             s_probe_ongoing: false,
-            s_probe_initiated_end: false,
+            s_probe_end_initiated: false,
             s_probe_first_time: None,
             s_probe_start_time: None,
             s_probe_cwnd_before: p.p_lb_cwnd_pkts,
@@ -1160,6 +1185,7 @@ impl NDDProved {
             s_probe_last_seq: None,
             s_probe_min_qdel_during: None,
             s_probe_excess_amount: 0,
+            s_probe_drain_amount: 0.,
         }
     }
 }

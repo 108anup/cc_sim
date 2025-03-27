@@ -46,5 +46,5 @@
   },
   "random_seed": 0,
   "metrics_config_file": "metrics_config.json",
-  "data_dir": "tmp/tmp"
+  "data_dir": "tmp/dumbbell"
 }

@@ -67,5 +67,5 @@
   },
   "random_seed": 0,
   "metrics_config_file": "metrics_config.json",
-  "data_dir": "tmp/bw_estimate_analysis/debug"
+  "data_dir": "tmp/different_rtt"
 }
