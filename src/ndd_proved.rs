@@ -1118,6 +1118,7 @@ impl NDDProved {
     }
 
     pub fn new(p: &NDDParams) -> Self {
+        println!("Creating NDDProved with params: {:?}", p);
         Self {
             name: "".to_string(),
             s_rng: StdRng::seed_from_u64(p.p_rng_seed),

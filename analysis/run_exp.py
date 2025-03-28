@@ -85,6 +85,9 @@ different_rtt_jstring = '''{
       {
         "num_senders": 1,
         "delay": 1000,
+        "link": {
+          "Const": 150000000
+        },
         "agg_intersend": {
           "Const": 0
         },
@@ -95,6 +98,9 @@ different_rtt_jstring = '''{
       {
         "num_senders": 1,
         "delay": 1000,
+        "link": {
+          "Const": 150000000
+        },
         "agg_intersend": {
           "Const": 0
         },
@@ -138,10 +144,11 @@ def different_rtt_config_list(args):
     for multiplier_exp in [-3]:
         multiplier = 2 ** multiplier_exp
         pdict = {
-            "p_probe_duration": 300000,
+            # "p_probe_duration": 300000,
             "p_slots_per_round": 10,
             "p_probe_multiplier": multiplier,
             "p_ub_rtterr": DELAY,
+            "p_contract_min_qdel": 1000,
         }
         for rttratio_exp in range(1, 9):
             set_cc_config(_cfg, pdict)

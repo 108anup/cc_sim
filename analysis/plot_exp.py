@@ -86,7 +86,6 @@ def get_steady_state_throughput(df: pd.DataFrame):
 
 
 def plot_single_exp(input_dir: str, files: List[str]):
-    params = parse_params(os.path.basename(input_dir))
     cruise_dfs = {}
     for f in files:
         df = pd.read_csv(f)
@@ -106,7 +105,11 @@ def plot_single_exp(input_dir: str, files: List[str]):
     record["min_ack_rate"] = min(record.values())
     record["ratio"] = record["max_ack_rate"] / record["min_ack_rate"]
     record["input_dir"] = input_dir
-    record.update(params)
+    try:
+        params = parse_params(os.path.basename(input_dir))
+        record.update(params)
+    except ValueError:
+        pass
     # pprint.pprint(record)
 
     ax.legend()
