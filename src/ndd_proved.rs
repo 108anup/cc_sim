@@ -61,6 +61,8 @@ struct CruiseRecord {
     duration: Option<Time>,
     acked: Option<u64>,
     ack_rate: Option<f64>,
+    avg_rtt: Option<Time>,
+    n_rtt_samples: u64,
 
     probe_ongoing: bool,
 }
@@ -88,6 +90,8 @@ impl CruiseRecord {
             duration: None,
             acked: None,
             ack_rate: None,
+            avg_rtt: None,
+            n_rtt_samples: 0,
             probe_ongoing,
         }
     }
@@ -109,6 +113,18 @@ impl CruiseRecord {
         self.duration = Some(end_time - self.start_time);
         self.acked = Some(end_tot_rx - self.start_tot_rx);
         self.ack_rate = Some(self.acked.unwrap() as f64 / self.duration.unwrap().secs());
+    }
+
+    fn add_rtt_sample(&mut self, rtt: Time) {
+        if self.avg_rtt.is_none() {
+            self.avg_rtt = Some(rtt);
+        } else {
+            let num = self.avg_rtt.unwrap() * self.n_rtt_samples + rtt;
+            let denom = self.n_rtt_samples + 1;
+            self.avg_rtt =
+                Some(Time::from_micros(num.micros() / denom));
+        }
+        self.n_rtt_samples += 1;
     }
 }
 
@@ -396,7 +412,7 @@ impl CongestionControl for NDDProved {
         // TODO: timeout min_rtt estimate
 
         // ? split into measurement updates and cwnd action?
-        self.check_update_cruise_state_and_rate(now, cum_ack);
+        self.check_update_cruise_state_and_rate(now, cum_ack, rtt);
         self.update_probe_delay_if_allowed(cum_ack, rtt);
         self.update_communicated_flow_count(now, rtt);
         self.update_slot_state(now, rtt);
@@ -892,13 +908,14 @@ impl NDDProved {
         self.s_probe_drain_amount = 0.;
     }
 
-    fn check_update_cruise_state_and_rate(&mut self, now: Time, ack: SeqNum) {
+    fn check_update_cruise_state_and_rate(&mut self, now: Time, ack: SeqNum, rtt: Time) {
         if self.s_round_cruise_records.is_empty() {
             self.add_cruise_entry(now, ack);
         }
 
         let last_record: &mut CruiseRecord = self.s_round_cruise_records.last_mut().unwrap();
         last_record.probe_ongoing = last_record.probe_ongoing || self.s_probe_ongoing;
+        last_record.add_rtt_sample(rtt);
 
         if self.cruise_measurement_elapsed(now) {
             self.fill_cruise_entry(now, ack);
