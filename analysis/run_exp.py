@@ -150,13 +150,13 @@ def different_rtt_config_list(args):
             "p_ub_rtterr": DELAY,
             "p_contract_min_qdel": 1000,
         }
-        for rttratio_exp in range(1, 9):
+        for rtpropratio_exp in range(1, 9):
             set_cc_config(_cfg, pdict)
             cfg = copy.deepcopy(_cfg)
-            rttratio = 1 << rttratio_exp
-            run_path = os.path.join(exp_path, f"rttratio={rttratio}:multiplier={multiplier}")
+            rtpropratio = 1 << rtpropratio_exp
+            run_path = os.path.join(exp_path, f"rtpropratio={rtpropratio}:multiplier={multiplier}")
             cfg["topo"]["sender_groups"][0]["delay"] = DELAY
-            cfg["topo"]["sender_groups"][1]["delay"] = DELAY * rttratio
+            cfg["topo"]["sender_groups"][1]["delay"] = DELAY * rtpropratio
             os.makedirs(run_path, exist_ok=True)
             cfg["data_dir"] = run_path
             cfg_list.append(cfg)

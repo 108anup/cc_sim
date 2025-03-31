@@ -85,6 +85,13 @@ def get_steady_state_throughput(df: pd.DataFrame):
     return (end_rx - start_rx) / (end_time - start_time)
 
 
+def get_steady_state_rtt(df: pd.DataFrame):
+    # We look at the last 30% of the trace
+    start = int(0.7 * (len(df)-1))
+    avg_rtt_us = df.iloc[start:]["avg_rtt"].mean()
+    return avg_rtt_us
+
+
 def plot_single_exp(input_dir: str, files: List[str]):
     cruise_dfs = {}
     for f in files:
@@ -98,12 +105,11 @@ def plot_single_exp(input_dir: str, files: List[str]):
     for flow_id, df in cruise_dfs.items():
         ax.step(df["start_time"]/1e6, df["ack_rate"], where="post", label=flow_id)
         ss_ack_rate = get_steady_state_throughput(df)
+        ss_rtt = get_steady_state_rtt(df)
         # mean_ack_rate = df["ack_rate"].mean()
-        record[flow_id] = ss_ack_rate
+        record[f"ss_ack_rate_{flow_id}"] = ss_ack_rate
+        record[f"ss_rtt_{flow_id}"] = ss_rtt
 
-    record["max_ack_rate"] = max(record.values())
-    record["min_ack_rate"] = min(record.values())
-    record["ratio"] = record["max_ack_rate"] / record["min_ack_rate"]
     record["input_dir"] = input_dir
     try:
         params = parse_params(os.path.basename(input_dir))
@@ -124,8 +130,9 @@ def plot_single_exp(input_dir: str, files: List[str]):
 
 
 def plot_different_rtt(records, input_dir: str):
-    df = pd.DataFrame(records).sort_values(["multiplier", "rttratio"])
-    df["frac_short"] = df["0"]/(df["0"] + df["1"])
+    df = pd.DataFrame(records).sort_values(["multiplier", "rtpropratio"])
+    df["frac_short"] = df["ss_ack_rate_0"]/(df["ss_ack_rate_0"] + df["ss_ack_rate_1"])
+    df["rttratio"] = df["ss_rtt_1"]/df["ss_rtt_0"]
     print(df)
 
     fig, ax = plt.subplots()
@@ -133,10 +140,10 @@ def plot_different_rtt(records, input_dir: str):
         ax.plot(gdf["rttratio"], gdf["frac_short"], label=group)
 
     rtt_ratio_list = df["rttratio"].unique()
-    ax.plot(rtt_ratio_list, 1/(rtt_ratio_list + 1), label="1/(Rtprop ratio + 1)")
+    ax.plot(rtt_ratio_list, 1/(rtt_ratio_list + 1), label="1/(rtt_ratio + 1)")
 
     ax.legend()
-    ax.set_xlabel("Rtprop ratio")
+    ax.set_xlabel("RTT ratio")
     ax.set_ylabel("Fraction of link by short flow")
     ax.grid(True)
     ax.minorticks_on()
