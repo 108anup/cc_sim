@@ -1,6 +1,6 @@
 {
   "pkt_size": 1500,
-  "sim_dur": 1000000000,
+  "sim_dur": 300000000,
   "log": {
     "out_terminal": "png",
     "out_file": "different_rtt.png",
@@ -29,7 +29,7 @@
         "num_senders": 1,
         "delay": 10000,
         "link": {
-          "Const": 150000000
+          "Const": 15000000
         },
         "agg_intersend": {
           "Const": 0
@@ -37,9 +37,8 @@
         "cc": {
           "NDDProved": {
             "p_slots_per_round": 10,
-            "p_ub_rtprop": 1000000,
-            "p_ub_rtterr": 10000,
-            "p_probe_multiplier": 0.125
+            "p_ub_rtprop": 100000,
+            "p_ub_rtterr": 10000
           }
         },
         "start_time": 0,
@@ -47,9 +46,9 @@
       },
       {
         "num_senders": 1,
-        "delay": 1000000,
+        "delay": 10000,
         "link": {
-          "Const": 150000000
+          "Const": 15000000
         },
         "agg_intersend": {
           "Const": 0
@@ -57,9 +56,8 @@
         "cc": {
           "NDDProved": {
             "p_slots_per_round": 10,
-            "p_ub_rtprop": 1000000,
-            "p_ub_rtterr": 10000,
-            "p_probe_multiplier": 0.125
+            "p_ub_rtprop": 100000,
+            "p_ub_rtterr": 10000
           }
         },
         "start_time": 0,

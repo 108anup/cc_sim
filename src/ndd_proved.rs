@@ -316,6 +316,30 @@ impl Display for NDDProved {
         // output all the parameters
         writeln!(f, "NDDProved parameters:")?;
         writeln!(f, "p_rng_seed: {}", self.p_rng_seed)?;
+
+        writeln!(f, "f_wait_rtt_after_probe: {}", self.f_wait_rtt_after_probe)?;
+        writeln!(
+            f,
+            "f_deterministic_slot_idx: {}",
+            self.f_deterministic_slot_idx
+        )?;
+        writeln!(
+            f,
+            "f_probe_wait_in_max_rtts: {}",
+            self.f_probe_wait_in_max_rtts
+        )?;
+        writeln!(
+            f,
+            "f_probe_duration_max_rtt: {}",
+            self.f_probe_duration_max_rtt
+        )?;
+        writeln!(f, "f_drain_over_rtt: {}", self.f_drain_over_rtt)?;
+        writeln!(
+            f,
+            "f_slot_greater_than_rtprop: {}",
+            self.f_slot_greater_than_rtprop
+        )?;
+
         writeln!(
             f,
             "p_cwnd_averaging_factor: {}",
@@ -327,6 +351,8 @@ impl Display for NDDProved {
         writeln!(f, "p_probe_duration: {}", self.p_probe_duration)?;
         writeln!(f, "p_contract_min_delay: {}", self.p_contract_min_qdel)?;
         writeln!(f, "p_slots_per_round: {}", self.p_slots_per_round)?;
+        writeln!(f, "p_probe_wait_rtts: {}", self.p_probe_wait_rtts)?;
+
         writeln!(f, "p_ub_flow_count: {}", self.p_ub_flow_count)?;
         writeln!(f, "p_ub_rtterr: {}", self.p_ub_rtterr)?;
         writeln!(f, "p_ub_rtprop: {}", self.p_ub_rtprop)?;
@@ -1135,7 +1161,7 @@ impl NDDProved {
     }
 
     pub fn new(p: &NDDParams) -> Self {
-        println!("Creating NDDProved with params: {:?}", p);
+        // println!("Creating NDDProved with params: {:?}", p);
         Self {
             name: "".to_string(),
             s_rng: StdRng::seed_from_u64(p.p_rng_seed),
