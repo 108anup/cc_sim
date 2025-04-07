@@ -21,7 +21,7 @@
   "topo": {
     "topo_type": "Dumbbell",
     "link": {
-      "Const": 15000000
+      "Const": 1500000
     },
     "bufsize": "Infinite",
     "sender_groups": [
@@ -29,7 +29,7 @@
         "num_senders": 1,
         "delay": 10000,
         "link": {
-          "Const": 15000000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0
@@ -46,9 +46,9 @@
       },
       {
         "num_senders": 1,
-        "delay": 10000,
+        "delay": 80000,
         "link": {
-          "Const": 15000000
+          "Const": 150000000
         },
         "agg_intersend": {
           "Const": 0

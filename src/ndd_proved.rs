@@ -519,17 +519,30 @@ impl CongestionControl for NDDProved {
         if self.s_min_rtprop.micros() == u64::MAX {
             self.p_lb_intersend_time
         } else {
-            // std::cmp::max(
-            //     self.p_lb_intersend_time,
-            //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-            // )
-            std::cmp::max(
-                self.p_lb_intersend_time,
-                Time::from_micros((self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64),
-            )
-            // self.p_lb_intersend_time
+            #[allow(clippy::collapsible_if)]
+            if self.s_probe_ongoing && self.s_probe_inflightmatch_seq.is_none() {
+                std::cmp::max(
+                    self.p_lb_intersend_time,
+                    Time::from_micros(
+                        (self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 1.)) as u64,
+                    ),
+                )
+            } else {
+                // std::cmp::max(
+                //     self.p_lb_intersend_time,
+                //     Time::from_micros((self.s_latest_rtt.micros() as f64 / (self.s_cwnd * 2.)) as u64),
+                // )
+                std::cmp::max(
+                    self.p_lb_intersend_time,
+                    Time::from_micros(
+                        (self.s_min_rtprop.micros() as f64 / (self.s_cwnd * 2.)) as u64,
+                    ),
+                )
+                // self.p_lb_intersend_time
+            }
         }
     }
+
 
     fn on_timeout(&mut self) {
         self.s_cwnd = self.p_lb_cwnd_pkts;
