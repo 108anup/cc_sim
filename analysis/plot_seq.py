@@ -4,7 +4,22 @@ import pandas as pd
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.offline
+import matplotlib.pyplot as plt
+import matplotlib
 
+from plot_config_light import get_fig_size_paper, get_fig_size_ppt, get_style
+
+ppt = True
+ppt = False
+style = get_style(False, True, True)  # paper
+get_fig_size = get_fig_size_paper
+ext = "pdf"
+if ppt:
+    # style = get_style(False, False, True)  # ppt
+    style = get_style(False, False, False)  # ppt
+    get_fig_size = get_fig_size_ppt
+    ext = "svg"
+figsize = get_fig_size()
 
 def get_parser():
     parser = argparse.ArgumentParser(description="Plot sequence data")
@@ -20,6 +35,7 @@ def get_parser():
         "-r", "--cwnd-update-record", type=int, help="cwnd update record", default=None
     )
     parser.add_argument("-e", "--end", type=int, help="End time", default=None)
+    parser.add_argument("--train", type=int, help="Hack to set correct ylims", default=None)
     return parser
 
 
@@ -221,6 +237,7 @@ def plot_timeseries(args):
         inflight_match_time = get_ack_time("s_probe_inflightmatch_seq")
         first_time = get_ack_time("s_probe_first_seq")
         last_time = get_ack_time("s_probe_last_seq")
+        ack_last_time = last_time
 
         fig.add_vline(x=start_time, row=3, col=1, name="probe start time")
         fig.add_vline(x=inflight_match_time, row=3, col=1, name="inflight match time")
@@ -231,11 +248,36 @@ def plot_timeseries(args):
         inflight_match_time = get_send_time("s_probe_inflightmatch_seq")
         first_time = get_send_time("s_probe_first_seq")
         last_time = get_send_time("s_probe_last_seq")
+        seq_start_time = start_time
 
         fig.add_vline(x=start_time, row=3, col=1, name="probe start time (send)", line_dash="dash")
         fig.add_vline(x=inflight_match_time, row=3, col=1, name="inflight match time (send)", line_dash="dash")
         fig.add_vline(x=first_time, row=3, col=1, name="first time (send)", line_dash="dash")
         fig.add_vline(x=last_time, row=3, col=1, name="last time (send)", line_dash="dash")
+
+        with matplotlib.rc_context(style):
+            figsize = get_fig_size(0.49, 0.49)
+            duration = ack_last_time - seq_start_time
+            start = seq_start_time - duration / 6
+            end = ack_last_time + duration / 1.5
+            fdf = df[(df["time"] >= start) & (df["time"] <= end)].copy()
+            fdf["time"] = fdf["time"] - seq_start_time
+            pfig, ax = plt.subplots(figsize=figsize)
+            ax.scatter(fdf["time"], fdf["rtt"], label="ACK", marker="d", s=2, lw=0.1)
+            ax.scatter(fdf["time"]-fdf["rtt"], fdf["rtt"], label="TX", marker="X", s=2, lw=0.1)
+            ax.legend()
+            if args.train:
+                ax.set_ylim(25, 90)
+            else:
+                ax.set_ylim(20, 120)
+            ax.set_xlabel("Time (ms)")
+            ax.set_ylabel("RTT (ms)")
+            ax.grid(True)
+            pfig.set_layout_engine('tight', pad=0.03)
+            oname = os.path.basename(ipath).replace(".csv", ".pdf")
+            opath = os.path.join(dpath, oname)
+            pfig.savefig(opath)
+            plt.close(pfig)
 
     oname = os.path.basename(ipath).replace(".csv", ".html")
     opath = os.path.join(dpath, oname)
