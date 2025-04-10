@@ -35,7 +35,7 @@ def get_parser():
         "-r", "--cwnd-update-record", type=int, help="cwnd update record", default=None
     )
     parser.add_argument("-e", "--end", type=int, help="End time", default=None)
-    parser.add_argument("--train", type=int, help="Hack to set correct ylims", default=None)
+    parser.add_argument("--train", action="store_true", help="Hack to set correct ylims")
     return parser
 
 
